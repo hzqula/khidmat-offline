@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Khidmat
 
-## Getting Started
+Sistem Informasi Masjid berbasis Next.js (App Router), Supabase Auth, dan Prisma.
 
-First, run the development server:
+## Arsitektur Single Tenant
+
+Aplikasi ini didesain untuk **1 masjid per 1 instance deploy**.
+
+- Data masjid disimpan sebagai **singleton** (satu record konfigurasi global).
+- Admin mengelola data via endpoint protected: `GET/POST /api/admin/mosque`.
+- Layar publik (`/display`) membaca data via endpoint public read-only: `GET /api/public/mosque`.
+
+## Stack
+
+- Next.js 16 + React 19
+- Supabase SSR auth
+- Prisma + PostgreSQL
+- React Query + Axios
+- Tailwind CSS 4
+
+## Menjalankan Project
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Buka [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Buat file `.env` minimal berisi:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+DATABASE_URL=postgresql://...
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 
-## Learn More
+# Optional: set false jika tidak ingin user baru daftar sendiri
+ALLOW_PUBLIC_REGISTRATION=true
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Rute penting
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Public:
+  - `/`
+  - `/display`
+  - `/api/public/mosque`
+- Auth:
+  - `/auth/login`
+  - `/auth/register`
+- Admin (butuh login):
+  - `/dashboard`
+  - `/settings`
+  - `/images`
+  - `/announcements`
+  - `/api/admin/mosque`
