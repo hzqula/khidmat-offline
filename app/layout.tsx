@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Noto_Serif } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 import QueryProvider from "@/components/providers/query-provider";

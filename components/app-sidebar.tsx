@@ -11,24 +11,15 @@ import {
 } from "@/components/ui/sidebar";
 import { User2 } from "lucide-react";
 import Link from "next/link";
-import { PiUploadFill, PiUploadSimpleThin } from "react-icons/pi";
-import {
-  RiDashboard2Fill,
-  RiDashboard2Line,
-  RiSettings2Fill,
-  RiSettings2Line,
-} from "react-icons/ri";
+import { RiSettings2Line } from "react-icons/ri";
 import { LuLayoutDashboard } from "react-icons/lu";
 
-import { IoNewspaperSharp } from "react-icons/io5";
 import { FaRegNewspaper } from "react-icons/fa6";
 import { GoUpload } from "react-icons/go";
 import { usePathname } from "next/navigation";
 
 const AppSidebar = () => {
   const pathname = usePathname();
-
-  console.log(pathname);
 
   const links = [
     { name: "Dashboard", href: "/dashboard", icon: <LuLayoutDashboard /> },
