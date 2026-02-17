@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import QueryProvider from "@/components/providers/query-provider";
+import { Toaster } from "@/components/ui/sonner";
 
 const sourceSans = localFont({
   src: [
@@ -65,6 +66,7 @@ export default function RootLayout({
         className={`${sourceSans.variable} ${khadijah.variable} ${sourceSerif.variable} antialiased`}
       >
         <QueryProvider>{children}</QueryProvider>
+        <Toaster position="top-right" />
       </body>
     </html>
   );
