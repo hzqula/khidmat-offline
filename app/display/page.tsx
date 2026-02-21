@@ -11,10 +11,11 @@ import api from "@/lib/axios";
 import { Coordinates, CalculationMethod, PrayerTimes } from "adhan";
 import moment from "moment-timezone";
 import { Announcement } from "@/lib/types/announcement";
+import { DisplayImage } from "@/lib/types/display-image";
 
 const DisplayPage = () => {
   const [now, setNow] = useState(new Date());
-
+  const [activeSlide, setActiveSlide] = useState(0);
   const {
     data: mosque,
     isLoading,
@@ -26,6 +27,15 @@ const DisplayPage = () => {
       return data;
     },
     refetchInterval: 600000,
+  });
+
+  const { data: displayImages } = useQuery<DisplayImage[]>({
+    queryKey: ["public-images"],
+    queryFn: async () => {
+      const { data } = await api.get("/public/images");
+      return data;
+    },
+    refetchInterval: 120000,
   });
 
   const { data: announcementItems } = useQuery<Announcement[]>({
@@ -94,6 +104,24 @@ const DisplayPage = () => {
       },
     ];
   }, [mosque, now.toDateString()]);
+
+  useEffect(() => {
+    if (!displayImages || displayImages.length <= 1) {
+      setActiveSlide(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setActiveSlide((prev) => (prev + 1) % displayImages.length);
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [displayImages]);
+
+  const currentSlide =
+    displayImages && displayImages.length > 0
+      ? displayImages[activeSlide % displayImages.length]
+      : null;
 
   const currentTimeStr = moment(now).format("HH:mm");
   const nextSholat =
@@ -220,7 +248,29 @@ const DisplayPage = () => {
         {/* Image Slider Space */}
         <div className="py-4 pr-4 h-full w-full">
           <div className="w-full h-full relative overflow-hidden rounded-2xl shadow-inner bg-gray-100 flex items-center justify-center border-2 border-gray-200">
-            {mosque.logoUrl ? (
+            {currentSlide ? (
+              <>
+                <Image
+                  key={currentSlide.id}
+                  src={currentSlide.imageUrl}
+                  alt="Slide Display"
+                  fill
+                  className="object-cover transition-opacity duration-700"
+                />
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+                  {displayImages?.map((image, index) => (
+                    <span
+                      key={image.id}
+                      className={`h-2.5 rounded-full transition-all ${
+                        index === activeSlide
+                          ? "w-8 bg-white"
+                          : "w-2.5 bg-white/50"
+                      }`}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : mosque.logoUrl ? (
               <Image
                 src={mosque.logoUrl}
                 alt="Logo"
@@ -229,7 +279,7 @@ const DisplayPage = () => {
               />
             ) : (
               <p className="text-gray-400 italic">
-                Tempat Slider Gambar (Fitur 2)
+                Belum ada gambar slider. Silakan unggah dari dashboard admin.
               </p>
             )}
           </div>
