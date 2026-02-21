@@ -12,6 +12,7 @@ import { Coordinates, CalculationMethod, PrayerTimes } from "adhan";
 import moment from "moment-timezone";
 import { Announcement } from "@/lib/types/announcement";
 import { DisplayImage } from "@/lib/types/display-image";
+import { WeeklyFinanceSummary } from "@/lib/types/finance";
 
 const DisplayPage = () => {
   const [now, setNow] = useState(new Date());
@@ -45,6 +46,15 @@ const DisplayPage = () => {
       return data;
     },
     refetchInterval: 60000,
+  });
+
+  const { data: weeklyFinance } = useQuery<WeeklyFinanceSummary>({
+    queryKey: ["public-weekly-finance"],
+    queryFn: async () => {
+      const { data } = await api.get("/public/finance/weekly");
+      return data;
+    },
+    refetchInterval: 1800000,
   });
 
   useEffect(() => {
@@ -154,12 +164,30 @@ const DisplayPage = () => {
     );
   }
 
+  const financeText = weeklyFinance
+    ? (() => {
+        const saldoMasjid =
+          weeklyFinance.totalMasukMasjid - weeklyFinance.totalKeluarMasjid;
+        const saldoYatim =
+          weeklyFinance.totalMasukYatim - weeklyFinance.totalKeluarYatim;
+
+        const rupiah = (value: number) =>
+          new Intl.NumberFormat("id-ID", {
+            style: "currency",
+            currency: "IDR",
+            maximumFractionDigits: 0,
+          }).format(value);
+
+        return `Keuangan pekan ini - Kas Masjid: saldo ${rupiah(saldoMasjid)} (masuk ${rupiah(weeklyFinance.totalMasukMasjid)}, keluar ${rupiah(weeklyFinance.totalKeluarMasjid)}). Kas Yatim: saldo ${rupiah(saldoYatim)} (masuk ${rupiah(weeklyFinance.totalMasukYatim)}, keluar ${rupiah(weeklyFinance.totalKeluarYatim)}).`;
+      })()
+    : "";
+
   const runningAnnouncementText =
     announcementItems && announcementItems.length > 0
       ? announcementItems
           .map((announcement, index) => `${index + 1}. ${announcement.content}`)
-          .join("   ✦   ")
-      : `Selamat Datang di ${mosque?.name ?? "Masjid"} - Jagalah kebersihan masjid kita bersama.`;
+          .join("   ✦   ") + (financeText ? `   ✦   ${financeText}` : "")
+      : `Selamat Datang di ${mosque?.name ?? "Masjid"} - Jagalah kebersihan masjid kita bersama.${financeText ? `   ✦   ${financeText}` : ""}`;
 
   if (!prayerData) {
     return (

@@ -9,7 +9,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { User2 } from "lucide-react";
+import { Banknote, User2 } from "lucide-react";
 import Link from "next/link";
 import { RiSettings2Line } from "react-icons/ri";
 import { LuLayoutDashboard } from "react-icons/lu";
@@ -37,6 +37,11 @@ const AppSidebar = () => {
       name: "Pengumuman",
       href: "/announcements",
       icon: <FaRegNewspaper />,
+    },
+    {
+      name: "Catatan Keuangan",
+      href: "/finance",
+      icon: <Banknote />,
     },
   ];
 

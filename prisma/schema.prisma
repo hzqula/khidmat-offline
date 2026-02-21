@@ -63,3 +63,29 @@ model DisplayImage {
 
   @@map("display_images")
 }
+
+enum FinanceCategory {
+  INFAQ_MASJID
+  INFAQ_ANAK_YATIM
+}
+
+enum FinanceType {
+  PEMASUKAN
+  PENGELUARAN
+}
+
+model FinanceTransaction {
+  id          String          @id @default(uuid())
+  nominal     Int
+  category    FinanceCategory
+  type        FinanceType
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([category, createdAt])
+  @@index([type, createdAt])
+  @@map("finance_transactions")
+}
