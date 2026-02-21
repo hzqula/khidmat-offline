@@ -174,7 +174,7 @@ const AnnouncementsPage = () => {
               <Skeleton className="h-16 w-full rounded-lg" />
             </div>
           ) : announcements.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground pb-6">
               Belum ada pengumuman.
             </p>
           ) : (

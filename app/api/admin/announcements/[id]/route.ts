@@ -16,6 +16,7 @@ export const DELETE = async (
 
     const { id } = await params;
     await deleteAnnouncement(id);
+    return NextResponse.json({}, { status: 200 });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
