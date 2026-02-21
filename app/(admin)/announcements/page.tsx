@@ -4,8 +4,19 @@ import { AxiosError } from "axios";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/axios";
-import { FaSpinner, FaTrash } from "react-icons/fa6";
+import { Trash2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Announcement } from "@/lib/types/announcement";
 import { toast } from "sonner";
@@ -18,13 +29,15 @@ interface ErrorResponse {
   error: string;
 }
 
+const MAX_ANNOUNCEMENTS = 5;
+const MAX_CHARS = 200;
+
 const AnnouncementsPage = () => {
   const queryClient = useQueryClient();
+
   const form = useForm<AnnouncementForm>({
     mode: "onChange",
-    defaultValues: {
-      content: "",
-    },
+    defaultValues: { content: "" },
   });
 
   const { data: announcementItems, isLoading } = useQuery<Announcement[]>({
@@ -35,10 +48,9 @@ const AnnouncementsPage = () => {
     },
   });
 
-  const createAnnouncementMutation = useMutation({
-    mutationFn: async (payload: AnnouncementForm) => {
-      return api.post("admin/announcements", payload);
-    },
+  const createMutation = useMutation({
+    mutationFn: async (payload: AnnouncementForm) =>
+      api.post("admin/announcements", payload),
     onSuccess: () => {
       form.reset();
       queryClient.invalidateQueries({ queryKey: ["announcements"] });
@@ -50,10 +62,8 @@ const AnnouncementsPage = () => {
     },
   });
 
-  const deleteAnnouncementMutation = useMutation({
-    mutationFn: async (id: string) => {
-      return api.delete(`/admin/announcements/${id}`);
-    },
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => api.delete(`/admin/announcements/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["announcements"] });
       queryClient.invalidateQueries({ queryKey: ["public-announcements"] });
@@ -64,108 +74,144 @@ const AnnouncementsPage = () => {
 
   const announcements = announcementItems ?? [];
   const contentValue = form.watch("content") ?? "";
+  const isAtLimit = announcements.length >= MAX_ANNOUNCEMENTS;
 
   return (
     <div className="flex flex-col p-6 bg-green-50/30 min-h-screen gap-6">
+      {/* Header */}
       <div>
         <h1 className="font-bold text-4xl font-display text-emerald-900">
           Pengumuman
         </h1>
-        <p className="text-muted-foreground">
-          Buat pengumuman untuk berjalan di halaman display (maksimal 5 item).
+        <p className="text-muted-foreground mt-1">
+          Buat pengumuman untuk berjalan di halaman display (maksimal{" "}
+          {MAX_ANNOUNCEMENTS} item).
         </p>
       </div>
 
-      <div className="bg-white border rounded-xl shadow-sm p-6 space-y-4">
-        <form
-          onSubmit={form.handleSubmit((values) =>
-            createAnnouncementMutation.mutate(values),
-          )}
-          className="space-y-3"
-        >
-          <label className="font-semibold text-sm text-emerald-900">
-            Isi Pengumuman
-          </label>
-          <textarea
-            className="w-full min-h-28 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            placeholder="Contoh: Kajian ba'da Maghrib dimulai pukul 18.45 WIB"
-            maxLength={200}
-            {...form.register("content", {
-              required: true,
-              validate: (value) => value.trim().length > 0,
-            })}
-          />
-          <div className="text-xs text-muted-foreground text-right">
-            {contentValue.length}/200 karakter
-          </div>
+      {/* Form */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Tambah Pengumuman</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit((values) =>
+                createMutation.mutate(values),
+              )}
+              className="space-y-4"
+            >
+              <FormField
+                control={form.control}
+                name="content"
+                rules={{
+                  required: "Isi pengumuman wajib diisi",
+                  validate: (value) =>
+                    value.trim().length > 0 || "Pengumuman tidak boleh kosong",
+                }}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Isi Pengumuman</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        className="min-h-28"
+                        placeholder="Contoh: Kajian ba'da Maghrib dimulai pukul 18.45 WIB"
+                        maxLength={MAX_CHARS}
+                        {...field}
+                      />
+                    </FormControl>
+                    <div className="flex items-center justify-between">
+                      <FormMessage />
+                      <p className="text-xs text-muted-foreground ml-auto">
+                        {contentValue.length}/{MAX_CHARS} karakter
+                      </p>
+                    </div>
+                  </FormItem>
+                )}
+              />
 
-          <Button
-            type="submit"
-            disabled={
-              createAnnouncementMutation.isPending ||
-              announcements.length >= 5 ||
-              !form.formState.isValid
-            }
-            className="bg-emerald-600 hover:bg-emerald-700"
-          >
-            {createAnnouncementMutation.isPending ? (
-              <>
-                <FaSpinner className="animate-spin" /> Menyimpan...
-              </>
-            ) : (
-              "Tambah Pengumuman"
-            )}
-          </Button>
-          {announcements.length >= 5 && (
-            <p className="text-sm text-red-600">
-              Batas maksimal 5 pengumuman sudah tercapai. Hapus salah satu untuk
-              menambah baru.
-            </p>
-          )}
-        </form>
-      </div>
+              {isAtLimit && (
+                <p className="text-sm text-red-600">
+                  Batas maksimal {MAX_ANNOUNCEMENTS} pengumuman sudah tercapai.
+                  Hapus salah satu untuk menambah baru.
+                </p>
+              )}
 
-      <div className="bg-white border rounded-xl shadow-sm p-6">
-        <h2 className="font-semibold text-lg mb-4">Daftar Pengumuman</h2>
-
-        {isLoading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-          </div>
-        ) : announcements.length === 0 ? (
-          <p className="text-muted-foreground">Belum ada pengumuman.</p>
-        ) : (
-          <div className="space-y-3">
-            {announcements.map((announcement, index) => (
-              <div
-                key={announcement.id}
-                className="border rounded-lg p-4 flex items-start justify-between gap-3"
+              <Button
+                type="submit"
+                className="bg-emerald-600 hover:bg-emerald-700"
+                disabled={
+                  createMutation.isPending ||
+                  isAtLimit ||
+                  !form.formState.isValid
+                }
               >
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">
-                    #{index + 1}
-                  </p>
-                  <p className="font-medium text-emerald-950">
-                    {announcement.content}
-                  </p>
+                {createMutation.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Tambah Pengumuman
+              </Button>
+            </form>
+          </Form>
+        </CardContent>
+      </Card>
+
+      {/* List */}
+      <Card className="pb-0">
+        <CardHeader>
+          <CardTitle>
+            Daftar Pengumuman
+            <span className="ml-2 text-sm font-normal text-muted-foreground">
+              ({announcements.length}/{MAX_ANNOUNCEMENTS})
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-16 w-full rounded-lg" />
+              <Skeleton className="h-16 w-full rounded-lg" />
+            </div>
+          ) : announcements.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Belum ada pengumuman.
+            </p>
+          ) : (
+            <div className="space-y-0">
+              {announcements.map((announcement, index) => (
+                <div key={announcement.id}>
+                  <div className="flex items-start justify-between gap-3 py-4">
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">
+                        #{index + 1}
+                      </p>
+                      <p className="font-medium text-emerald-950">
+                        {announcement.content}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      disabled={deleteMutation.isPending}
+                      onClick={() => deleteMutation.mutate(announcement.id)}
+                    >
+                      {deleteMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      Hapus
+                    </Button>
+                  </div>
+                  {index < announcements.length - 1 && <Separator />}
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  disabled={deleteAnnouncementMutation.isPending}
-                  onClick={() =>
-                    deleteAnnouncementMutation.mutate(announcement.id)
-                  }
-                >
-                  <FaTrash /> Hapus
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 };

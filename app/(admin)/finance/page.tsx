@@ -277,17 +277,8 @@ const FinancePage = () => {
       <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
         {summaryCards.map((item) => (
           <Card key={item.label}>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                  {item.label}
-                </p>
-                {item.type === "PEMASUKAN" ? (
-                  <TrendingUp className="h-4 w-4 text-emerald-500" />
-                ) : (
-                  <TrendingDown className="h-4 w-4 text-red-400" />
-                )}
-              </div>
+            <CardHeader className="font-bold">{item.label}</CardHeader>
+            <CardContent className="flex items-center justify-between mb-2">
               <p
                 className={`text-2xl font-bold ${
                   item.type === "PEMASUKAN"
@@ -297,6 +288,11 @@ const FinancePage = () => {
               >
                 {formatRupiah(item.value)}
               </p>
+              {item.type === "PEMASUKAN" ? (
+                <TrendingUp className="h-4 w-4 text-emerald-500" />
+              ) : (
+                <TrendingDown className="h-4 w-4 text-red-400" />
+              )}
             </CardContent>
           </Card>
         ))}
