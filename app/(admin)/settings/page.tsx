@@ -24,6 +24,7 @@ import {
   FlaskConical,
   Radio,
   StopCircle,
+  ChevronRight,
 } from "lucide-react";
 import { PrayerSettings } from "@/lib/types/prayer-settings";
 
@@ -57,14 +58,21 @@ type FormValues = {
 };
 
 /**
- * Pesan simulasi ke display tab.
- * Phase sekarang selalu "iqamah" — tidak ada countdown azan.
+ * Alur simulasi yang dikirim ke display:
+ *   preview (10s) → adhan overlay (adhanAlarmDuration)
+ *   → iqamah countdown (iqamahDurationSec)
+ *   → salat-alarm overlay (iqamahAlarmDuration)
+ *   → salat overlay (salatDurationSec)
+ *   → selesai / STOP_SIM
  */
 export type SimMessage =
   | {
       type: "START_SIM";
       prayer: PrayerName;
-      durationSec: number;
+      /** Durasi countdown iqamah dalam detik (untuk simulasi, bisa lebih pendek) */
+      iqamahDurationSec: number;
+      /** Durasi overlay shalat dalam detik (untuk simulasi) */
+      salatDurationSec: number;
       adhanSoundPath: string;
       iqamahSoundPath: string;
       adhanAlarmEnabled: boolean;
@@ -75,6 +83,46 @@ export type SimMessage =
 interface ErrorResponse {
   error: string;
 }
+
+// ── Durasi simulasi yang bisa dipilih ────────────────────────────────────────
+const SIM_IQAMAH_DURATIONS = [
+  { label: "15 detik", value: 15 },
+  { label: "30 detik", value: 30 },
+  { label: "1 menit", value: 60 },
+];
+
+const SIM_SALAT_DURATIONS = [
+  { label: "15 detik", value: 15 },
+  { label: "30 detik", value: 30 },
+  { label: "1 menit", value: 60 },
+];
+
+// ── Fase simulasi (untuk progress panel) ─────────────────────────────────────
+type SimPhase =
+  | "preview"
+  | "adhan"
+  | "iqamah"
+  | "salat-alarm"
+  | "salat"
+  | "done";
+
+const PHASE_LABELS: Record<SimPhase, string> = {
+  preview: "Preview (10 detik)",
+  adhan: "Overlay Azan",
+  iqamah: "Countdown Iqamah",
+  "salat-alarm": "Overlay Iqamah",
+  salat: "Overlay Shalat",
+  done: "Selesai",
+};
+
+const PHASE_COLORS: Record<SimPhase, string> = {
+  preview: "bg-blue-400",
+  adhan: "bg-amber-400",
+  iqamah: "bg-blue-500",
+  "salat-alarm": "bg-purple-400",
+  salat: "bg-emerald-500",
+  done: "bg-gray-400",
+};
 
 // ── Hooks ────────────────────────────────────────────────────────────────────
 function useSoundPreview() {
@@ -318,29 +366,64 @@ function SimulationPanel({
 }) {
   const { send } = useBroadcast();
 
-  const SIM_DURATIONS = [
-    { label: "30 detik", value: 30 },
-    { label: "1 menit", value: 60 },
-    { label: "2 menit", value: 120 },
-  ];
-
-  const [simDuration, setSimDuration] = useState(30);
+  const [simIqamahDuration, setSimIqamahDuration] = useState(30);
+  const [simSalatDuration, setSimSalatDuration] = useState(30);
   const [simPrayer, setSimPrayer] = useState<PrayerName>("Dzuhur");
-  const [activeSim, setActiveSim] = useState<{
-    prayer: PrayerName;
-    remaining: number;
-    total: number;
-  } | null>(null);
+
+  // State progres simulasi (dikelola di sini untuk tampilan panel)
+  const [simPhase, setSimPhase] = useState<SimPhase | null>(null);
+  const [phaseRemaining, setPhaseRemaining] = useState(0);
+  const [phaseTotal, setPhaseTotal] = useState(0);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const phaseQueueRef = useRef<Array<{ phase: SimPhase; durationSec: number }>>(
+    [],
+  );
+  const currentPhaseIdxRef = useRef(0);
+  const remainingRef = useRef(0);
 
   const stopSim = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    setActiveSim(null);
+    setSimPhase(null);
+    setPhaseRemaining(0);
+    setPhaseTotal(0);
     send({ type: "STOP_SIM" });
+  }, [send]);
+
+  const runNextPhase = useCallback(() => {
+    const queue = phaseQueueRef.current;
+    const idx = currentPhaseIdxRef.current;
+
+    if (idx >= queue.length) {
+      // Semua fase selesai
+      setSimPhase("done");
+      setTimeout(() => {
+        send({ type: "STOP_SIM" });
+        setSimPhase(null);
+      }, 2000);
+      return;
+    }
+
+    const { phase, durationSec } = queue[idx];
+    setSimPhase(phase);
+    setPhaseTotal(durationSec);
+    setPhaseRemaining(durationSec);
+    remainingRef.current = durationSec;
+
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      remainingRef.current -= 1;
+      setPhaseRemaining(remainingRef.current);
+      if (remainingRef.current <= 0) {
+        clearInterval(timerRef.current!);
+        timerRef.current = null;
+        currentPhaseIdxRef.current += 1;
+        runNextPhase();
+      }
+    }, 1000);
   }, [send]);
 
   const startSim = useCallback(() => {
@@ -350,37 +433,37 @@ function SimulationPanel({
     }
     stopSim();
 
+    // Kirim pesan ke display tab
     send({
       type: "START_SIM",
       prayer: simPrayer,
-      durationSec: simDuration,
+      iqamahDurationSec: simIqamahDuration,
+      salatDurationSec: simSalatDuration,
       adhanSoundPath: settings.adhanSoundPath,
       iqamahSoundPath: settings.iqamahSoundPath,
       adhanAlarmEnabled: settings.adhanAlarmEnabled,
       iqamahAlarmEnabled: settings.iqamahAlarmEnabled,
     });
 
-    setActiveSim({
-      prayer: simPrayer,
-      remaining: simDuration,
-      total: simDuration,
-    });
-    timerRef.current = setInterval(() => {
-      setActiveSim((prev) => {
-        if (!prev) return null;
-        if (prev.remaining <= 1) {
-          clearInterval(timerRef.current!);
-          timerRef.current = null;
-          setTimeout(() => {
-            send({ type: "STOP_SIM" });
-            setActiveSim(null);
-          }, 2000);
-          return { ...prev, remaining: 0 };
-        }
-        return { ...prev, remaining: prev.remaining - 1 };
-      });
-    }, 1000);
-  }, [settings, simPrayer, simDuration, send, stopSim]);
+    // Susun antrian fase (durasi harus cocok dengan yang dikirim ke display)
+    phaseQueueRef.current = [
+      { phase: "preview", durationSec: 10 },
+      { phase: "adhan", durationSec: 10 },
+      { phase: "iqamah", durationSec: simIqamahDuration },
+      { phase: "salat-alarm", durationSec: 10 },
+      { phase: "salat", durationSec: simSalatDuration },
+    ];
+    currentPhaseIdxRef.current = 0;
+    runNextPhase();
+  }, [
+    settings,
+    simPrayer,
+    simIqamahDuration,
+    simSalatDuration,
+    send,
+    stopSim,
+    runNextPhase,
+  ]);
 
   useEffect(
     () => () => {
@@ -389,13 +472,19 @@ function SimulationPanel({
     [],
   );
 
-  const pct = activeSim ? (activeSim.remaining / activeSim.total) * 100 : 0;
-  const mins = activeSim
-    ? String(Math.floor(activeSim.remaining / 60)).padStart(2, "0")
-    : "00";
-  const secs = activeSim
-    ? String(activeSim.remaining % 60).padStart(2, "0")
-    : "00";
+  const isRunning = simPhase !== null && simPhase !== "done";
+  const pct = phaseTotal > 0 ? (phaseRemaining / phaseTotal) * 100 : 0;
+  const mins = String(Math.floor(phaseRemaining / 60)).padStart(2, "0");
+  const secs = String(phaseRemaining % 60).padStart(2, "0");
+
+  // Urutan fase untuk stepper
+  const PHASE_STEPS: SimPhase[] = [
+    "preview",
+    "adhan",
+    "iqamah",
+    "salat-alarm",
+    "salat",
+  ];
 
   return (
     <Card className="border-violet-100">
@@ -408,7 +497,7 @@ function SimulationPanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
-        {/* Alur simulasi */}
+        {/* Penjelasan alur */}
         <div className="rounded-xl bg-violet-50 border border-violet-100 px-4 py-3 flex items-start gap-3">
           <Radio className="w-4 h-4 text-violet-500 mt-0.5 shrink-0" />
           <div className="text-xs text-violet-700 leading-relaxed space-y-1">
@@ -420,16 +509,45 @@ function SimulationPanel({
               . Pastikan tab display sudah terbuka di{" "}
               <strong>browser yang sama</strong>.
             </p>
-            <p>
-              Alur yang disimulasikan: <strong>Alarm Azan berbunyi</strong> → 10
-              detik preview → <strong>Countdown Iqamah</strong> berjalan →{" "}
-              <strong>Alarm Iqamah berbunyi</strong>.
-            </p>
+            <p>Alur yang disimulasikan:</p>
           </div>
         </div>
 
+        {/* Alur fase visual */}
+        <div className="flex items-center gap-1 flex-wrap">
+          {[
+            { label: "Preview", color: "bg-blue-400", desc: "10 detik" },
+            { label: "Azan", color: "bg-amber-400", desc: "10 detik" },
+            {
+              label: "Countdown Iqamah",
+              color: "bg-blue-500",
+              desc: "Pilihan",
+            },
+            { label: "Iqamah", color: "bg-purple-400", desc: "10 detik" },
+            { label: "Shalat", color: "bg-emerald-500", desc: "Pilihan" },
+          ].map((item, i, arr) => (
+            <div key={item.label} className="flex items-center gap-1">
+              <div className="flex flex-col items-center">
+                <div
+                  className={`${item.color} text-white text-[10px] font-bold px-2.5 py-1 rounded-lg`}
+                >
+                  {item.label}
+                </div>
+                <span className="text-[10px] text-gray-400 mt-0.5">
+                  {item.desc}
+                </span>
+              </div>
+              {i < arr.length - 1 && (
+                <ChevronRight className="w-3 h-3 text-gray-300 shrink-0 mb-3" />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <Separator />
+
         {/* Pilihan */}
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid sm:grid-cols-3 gap-4">
           {/* Pilih shalat */}
           <div className="space-y-2">
             <p className="text-sm font-medium text-emerald-900">Waktu Shalat</p>
@@ -438,11 +556,11 @@ function SimulationPanel({
                 <button
                   key={name}
                   type="button"
-                  disabled={!!activeSim}
+                  disabled={isRunning}
                   onClick={() => setSimPrayer(name)}
                   className={[
                     "text-left px-3 py-2 rounded-lg border text-sm transition-all",
-                    activeSim
+                    isRunning
                       ? "opacity-40 cursor-not-allowed"
                       : "cursor-pointer hover:border-emerald-300",
                     simPrayer === name
@@ -456,24 +574,24 @@ function SimulationPanel({
             </div>
           </div>
 
-          {/* Pilih durasi */}
+          {/* Durasi countdown iqamah simulasi */}
           <div className="space-y-2">
             <p className="text-sm font-medium text-emerald-900">
               Durasi Countdown Iqamah
             </p>
             <div className="flex flex-col gap-1.5">
-              {SIM_DURATIONS.map((d) => (
+              {SIM_IQAMAH_DURATIONS.map((d) => (
                 <button
                   key={d.value}
                   type="button"
-                  disabled={!!activeSim}
-                  onClick={() => setSimDuration(d.value)}
+                  disabled={isRunning}
+                  onClick={() => setSimIqamahDuration(d.value)}
                   className={[
                     "text-left px-3 py-2 rounded-lg border text-sm transition-all",
-                    activeSim
+                    isRunning
                       ? "opacity-40 cursor-not-allowed"
                       : "cursor-pointer hover:border-emerald-300",
-                    simDuration === d.value
+                    simIqamahDuration === d.value
                       ? "border-emerald-500 bg-emerald-50 font-semibold text-emerald-800"
                       : "border-gray-100 text-gray-600",
                   ].join(" ")}
@@ -481,48 +599,116 @@ function SimulationPanel({
                   {d.label}
                 </button>
               ))}
+              <p className="text-[11px] text-muted-foreground pt-0.5">
+                Nyata: {settings?.iqamahCountdownMinutes ?? "—"} menit
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground pt-1">
-              Durasi ini hanya untuk keperluan simulasi. Countdown nyata
-              mengikuti pengaturan di atas.
+          </div>
+
+          {/* Durasi overlay shalat simulasi */}
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-emerald-900">
+              Durasi Overlay Shalat
             </p>
+            <div className="flex flex-col gap-1.5">
+              {SIM_SALAT_DURATIONS.map((d) => (
+                <button
+                  key={d.value}
+                  type="button"
+                  disabled={isRunning}
+                  onClick={() => setSimSalatDuration(d.value)}
+                  className={[
+                    "text-left px-3 py-2 rounded-lg border text-sm transition-all",
+                    isRunning
+                      ? "opacity-40 cursor-not-allowed"
+                      : "cursor-pointer hover:border-emerald-300",
+                    simSalatDuration === d.value
+                      ? "border-emerald-500 bg-emerald-50 font-semibold text-emerald-800"
+                      : "border-gray-100 text-gray-600",
+                  ].join(" ")}
+                >
+                  {d.label}
+                </button>
+              ))}
+              <p className="text-[11px] text-muted-foreground pt-0.5">
+                Nyata: 20 menit
+              </p>
+            </div>
           </div>
         </div>
 
         <Separator />
 
-        {/* Progress bar saat simulasi aktif */}
-        {activeSim && (
+        {/* Progress saat simulasi aktif */}
+        {simPhase && (
           <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 space-y-3">
+            {/* Stepper */}
+            <div className="flex items-center gap-1 mb-1">
+              {PHASE_STEPS.map((p, i) => {
+                const currentIdx = PHASE_STEPS.indexOf(simPhase as SimPhase);
+                const isDone = i < currentIdx;
+                const isActive = i === currentIdx;
+                return (
+                  <div key={p} className="flex items-center gap-1 flex-1">
+                    <div
+                      className={[
+                        "flex-1 h-1.5 rounded-full transition-all duration-500",
+                        isDone
+                          ? PHASE_COLORS[p]
+                          : isActive
+                            ? PHASE_COLORS[p] + " opacity-60"
+                            : "bg-violet-200",
+                      ].join(" ")}
+                    />
+                    {i < PHASE_STEPS.length - 1 && (
+                      <div
+                        className={[
+                          "w-1.5 h-1.5 rounded-full shrink-0",
+                          isDone ? "bg-violet-400" : "bg-violet-200",
+                        ].join(" ")}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-violet-500 uppercase tracking-widest font-semibold mb-0.5">
                   Simulasi Berjalan
                 </p>
                 <p className="font-bold text-violet-900">
-                  Countdown Iqamah — {activeSim.prayer}
+                  {simPhase === "done"
+                    ? "Selesai ✓"
+                    : `${PHASE_LABELS[simPhase]} — ${simPrayer}`}
                 </p>
               </div>
-              <span className="font-black text-3xl text-violet-700 tabular-nums">
-                {mins}:{secs}
-              </span>
+              {simPhase !== "done" && (
+                <span className="font-black text-3xl text-violet-700 tabular-nums">
+                  {mins}:{secs}
+                </span>
+              )}
             </div>
-            <div className="w-full h-2.5 rounded-full bg-violet-200 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-violet-500 transition-all duration-1000"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
+
+            {simPhase !== "done" && (
+              <div className="w-full h-2 rounded-full bg-violet-200 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-1000 ${PHASE_COLORS[simPhase]}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            )}
+
             <p className="text-xs text-violet-500 text-center">
-              Lihat tab <strong>/display</strong> — alarm azan berbunyi lalu
-              countdown iqamah tampil
+              Lihat tab <strong>/display</strong> — overlay berubah sesuai fase
             </p>
           </div>
         )}
 
         {/* Tombol */}
         <div className="flex gap-3">
-          {!activeSim ? (
+          {!isRunning ? (
             <Button
               type="button"
               onClick={startSim}
@@ -544,7 +730,7 @@ function SimulationPanel({
           )}
         </div>
 
-        {/* Test suara langsung */}
+        {/* Test suara cepat */}
         <Separator />
         <div className="space-y-2">
           <p className="text-sm font-medium text-emerald-900">
@@ -669,20 +855,25 @@ const SettingsPage = () => {
       </div>
 
       {/* Alur info banner */}
-      <div className="rounded-2xl bg-emerald-50 border border-emerald-100 px-5 py-4 flex items-center gap-4">
+      <div className="rounded-2xl bg-emerald-50 border border-emerald-100 px-5 py-4 flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 shrink-0">
           <Bell className="w-4 h-4 text-amber-500" />
           Alarm Azan
         </div>
-        <div className="w-8 h-px bg-emerald-300 shrink-0" />
+        <ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
         <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 shrink-0">
-          <Timer className="w-4 h-4 text-emerald-600" />
+          <Timer className="w-4 h-4 text-blue-500" />
           Countdown Iqamah
         </div>
-        <div className="w-8 h-px bg-emerald-300 shrink-0" />
+        <ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
         <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 shrink-0">
           <Bell className="w-4 h-4 text-purple-500" />
           Alarm Iqamah
+        </div>
+        <ChevronRight className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 shrink-0">
+          <Timer className="w-4 h-4 text-emerald-600" />
+          Overlay Shalat
         </div>
         <p className="text-xs text-emerald-600 ml-auto">
           Urutan alur pada layar display
@@ -693,7 +884,7 @@ const SettingsPage = () => {
         onSubmit={form.handleSubmit((v) => mutation.mutate(v))}
         className="space-y-6"
       >
-        {/* ── 1. Countdown Iqamah ───────────────────────────────────────────── */}
+        {/* ── 1. Countdown Iqamah ─────────────────────────────────────────── */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -705,9 +896,8 @@ const SettingsPage = () => {
           </CardHeader>
           <CardContent className="space-y-5">
             <p className="text-sm text-muted-foreground">
-              Setelah alarm azan berbunyi, countdown iqamah langsung tampil di
-              layar display selama durasi ini — memberi tahu jamaah untuk segera
-              merapatkan shaf.
+              Setelah alarm azan berbunyi, countdown iqamah tampil di layar
+              display selama durasi ini.
             </p>
             <Controller
               control={form.control}
@@ -724,7 +914,7 @@ const SettingsPage = () => {
               <p className="text-xs text-emerald-700 leading-relaxed">
                 Contoh: azan Maghrib pukul 18:03, durasi iqamah{" "}
                 <strong>{form.watch("iqamahCountdownMinutes")} menit</strong> →
-                iqamah dan alarm iqamah berbunyi pukul{" "}
+                iqamah berbunyi pukul{" "}
                 <strong>
                   {(() => {
                     const d = new Date();
@@ -738,7 +928,7 @@ const SettingsPage = () => {
           </CardContent>
         </Card>
 
-        {/* ── 2. Alarm Azan ─────────────────────────────────────────────────── */}
+        {/* ── 2. Alarm Azan ───────────────────────────────────────────────── */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-2 flex-wrap">
@@ -780,8 +970,6 @@ const SettingsPage = () => {
               className={`text-sm text-muted-foreground ${!adhanEnabled ? "opacity-50" : ""}`}
             >
               Suara yang diputar <strong>tepat saat waktu azan tiba</strong>.
-              Setelah alarm ini berbunyi, countdown iqamah langsung dimulai di
-              layar display.
             </p>
             <Controller
               control={form.control}
@@ -801,8 +989,7 @@ const SettingsPage = () => {
               <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 flex items-center gap-3">
                 <BellOff className="w-4 h-4 text-gray-400 shrink-0" />
                 <p className="text-xs text-gray-400">
-                  Alarm azan nonaktif. Countdown iqamah tetap berjalan tapi
-                  tidak ada suara azan.
+                  Alarm azan nonaktif. Countdown iqamah tetap berjalan.
                 </p>
               </div>
             )}
@@ -826,7 +1013,7 @@ const SettingsPage = () => {
           </CardContent>
         </Card>
 
-        {/* ── 3. Alarm Iqamah ───────────────────────────────────────────────── */}
+        {/* ── 3. Alarm Iqamah ─────────────────────────────────────────────── */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-2 flex-wrap">
@@ -867,8 +1054,8 @@ const SettingsPage = () => {
             <p
               className={`text-sm text-muted-foreground ${!iqamahEnabled ? "opacity-50" : ""}`}
             >
-              Suara yang diputar <strong>saat countdown iqamah habis</strong> —
-              menandai jamaah untuk segera berdiri dan merapatkan shaf.
+              Suara yang diputar <strong>saat countdown iqamah habis</strong>,
+              sebelum overlay shalat tampil.
             </p>
             <Controller
               control={form.control}
@@ -910,7 +1097,7 @@ const SettingsPage = () => {
           </CardContent>
         </Card>
 
-        {/* ── Ringkasan ─────────────────────────────────────────────────────── */}
+        {/* ── Ringkasan ────────────────────────────────────────────────────── */}
         <Card className="border-emerald-100 bg-emerald-50/40">
           <CardHeader>
             <CardTitle className="text-emerald-800 text-base">
@@ -969,7 +1156,7 @@ const SettingsPage = () => {
           </CardContent>
         </Card>
 
-        {/* ── Submit ────────────────────────────────────────────────────────── */}
+        {/* ── Submit ─────────────────────────────────────────────────────── */}
         <div className="flex justify-end">
           <Button
             type="submit"
@@ -984,7 +1171,7 @@ const SettingsPage = () => {
         </div>
       </form>
 
-      {/* Simulasi — di luar form agar tidak trigger submit */}
+      {/* Simulasi — di luar form */}
       <SimulationPanel settings={settings} />
     </div>
   );

@@ -19,6 +19,9 @@ import type { SimMessage } from "@/app/(admin)/settings/page";
 // ─────────────────────────────────────────────────────────────────────────────
 const BROADCAST_CHANNEL = "khidmat-display-sim";
 const PREVIEW_SECONDS = 10;
+const ADHAN_ALARM_DURATION = 10; // detik overlay azan + bunyi alarm
+const IQAMAH_ALARM_DURATION = 10; // detik overlay iqamah + bunyi alarm
+const SALAT_DURATION_MINUTES = 20; // menit overlay "sedang shalat"
 
 const PRAYER_STYLES = [
   { accent: "#4ade80" },
@@ -29,15 +32,44 @@ const PRAYER_STYLES = [
 ];
 
 // ── Types ────────────────────────────────────────────────────────────────────
-/** State iqamah countdown yang sedang tampil (real atau simulasi) */
-type IqamahCountdown = {
-  prayer: string;
-  remaining: string; // "MM:SS"
-  remainingSec: number;
-  isSim?: boolean;
-};
+/**
+ * Urutan fase display:
+ *  idle        → tampilan normal
+ *  adhan       → overlay "Sedang Azan" + bunyi alarm azan (ADHAN_ALARM_DURATION detik)
+ *  iqamah      → overlay countdown iqamah (N menit dari settings)
+ *  salat-alarm → overlay "Iqamah" + bunyi alarm iqamah (IQAMAH_ALARM_DURATION detik)
+ *  salat       → overlay "Sedang Shalat, Luruskan Shaf" (SALAT_DURATION_MINUTES menit)
+ */
+type DisplayPhase =
+  | { phase: "idle" }
+  | { phase: "adhan"; prayer: string; remainingSec: number; isSim?: boolean }
+  | {
+      phase: "iqamah";
+      prayer: string;
+      remainingSec: number;
+      totalSec: number;
+      isSim?: boolean;
+    }
+  | {
+      phase: "salat-alarm";
+      prayer: string;
+      remainingSec: number;
+      isSim?: boolean;
+    }
+  | {
+      phase: "salat";
+      prayer: string;
+      remainingSec: number;
+      totalSec: number;
+      isSim?: boolean;
+    };
 
-type SimStage = "preview" | "adhan-alarm" | "countdown";
+type SimStage =
+  | "preview"
+  | "adhan-alarm"
+  | "iqamah-countdown"
+  | "salat-alarm"
+  | "salat";
 
 type SimState = {
   stage: SimStage;
@@ -45,11 +77,11 @@ type SimState = {
   prayer: string;
   remainingSec: number;
   total: number;
+  salatDurationSec: number;
   adhanSoundPath: string;
   iqamahSoundPath: string;
   adhanAlarmEnabled: boolean;
   iqamahAlarmEnabled: boolean;
-  iqamahAlarmFired: boolean;
 };
 
 // ── Alarm hook ────────────────────────────────────────────────────────────────
@@ -66,6 +98,11 @@ function useAlarm() {
     audio.play().catch(() => console.warn("Audio gagal diputar:", path));
   }, []);
 
+  const stopAll = useCallback(() => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+  }, []);
+
   // Bersihkan key kemarin tiap menit
   useEffect(() => {
     const id = setInterval(() => {
@@ -77,10 +114,10 @@ function useAlarm() {
     return () => clearInterval(id);
   }, []);
 
-  return { fire };
+  return { fire, stopAll };
 }
 
-// ── Preview badge (pojok atas slider, saat sim stage = "preview") ────────────
+// ── Preview badge (saat sim stage = "preview") ─────────────────────────────
 function PreviewBadge({ sim }: { sim: SimState }) {
   if (sim.stage !== "preview") return null;
   const pct = (sim.previewLeft / PREVIEW_SECONDS) * 100;
@@ -99,7 +136,7 @@ function PreviewBadge({ sim }: { sim: SimState }) {
         }}
       >
         <span className="w-2 h-2 rounded-full animate-pulse bg-[#60a5fa]" />
-        SIMULASI — Countdown Iqamah {sim.prayer}
+        SIMULASI — {sim.prayer}
       </div>
       <div className="relative w-14 h-14 flex items-center justify-center">
         <svg
@@ -135,92 +172,230 @@ function PreviewBadge({ sim }: { sim: SimState }) {
   );
 }
 
-// ── Adhan alarm flash overlay (sim stage = "adhan-alarm") ───────────────────
-function AdhanFlashOverlay({ sim }: { sim: SimState }) {
-  if (sim.stage !== "adhan-alarm") return null;
+// ── Overlay: Sedang Azan ──────────────────────────────────────────────────────
+function AdhanOverlay({
+  prayer,
+  remainingSec,
+  isSim,
+}: {
+  prayer: string;
+  remainingSec: number;
+  isSim?: boolean;
+}) {
+  const pct = (remainingSec / ADHAN_ALARM_DURATION) * 100;
+  const circumference = 2 * Math.PI * 52;
+
   return (
     <div
-      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 rounded-2xl"
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl overflow-hidden"
       style={{
-        background: "linear-gradient(135deg, #fbbf2418, #fbbf2408)",
-        border: "2px solid #fbbf2460",
-        animation: "fadeIn 0.5s ease-out both",
+        background:
+          "radial-gradient(ellipse at 50% 60%, #1a0f00 0%, #0d0800 50%, #000 100%)",
+        animation: "fadeIn 0.6s ease-out both",
       }}
     >
-      <div className="absolute top-4 right-4 bg-violet-500/80 text-white text-[10px] font-bold px-2 py-0.5 rounded-full tracking-widest uppercase">
-        SIMULASI
+      {/* BG glow rings */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            width: 600,
+            height: 600,
+            background:
+              "radial-gradient(circle, #d4af3710 0%, transparent 65%)",
+            borderRadius: "50%",
+            animation: "pulseRing 3s ease-in-out infinite",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            width: 360,
+            height: 360,
+            background:
+              "radial-gradient(circle, #d4af3718 0%, transparent 65%)",
+            borderRadius: "50%",
+            animation: "pulseRing 2s ease-in-out infinite",
+            animationDelay: "0.5s",
+          }}
+        />
       </div>
-      {/* Pulsing bell */}
-      <div
-        className="w-28 h-28 rounded-full flex items-center justify-center text-5xl"
-        style={{
-          background: "radial-gradient(circle, #fbbf2430 0%, transparent 70%)",
-          boxShadow: "0 0 60px #fbbf2440",
-          animation: "pulseRing 1s ease-out infinite",
-          color: "#fbbf24",
-        }}
-      >
-        🔔
+
+      {isSim && (
+        <div className="absolute top-4 right-4 bg-violet-500/80 text-white text-[10px] font-bold px-2 py-0.5 rounded-full tracking-widest uppercase z-10">
+          SIMULASI
+        </div>
+      )}
+
+      {/* Arabic text */}
+      <p className="text-gold/40 text-3xl mb-4" style={{ fontFamily: "serif" }}>
+        الله أكبر
+      </p>
+
+      {/* Ring countdown + bell */}
+      <div className="relative flex items-center justify-center mb-6">
+        <svg
+          width="130"
+          height="130"
+          viewBox="0 0 130 130"
+          className="-rotate-90"
+        >
+          <circle
+            cx="65"
+            cy="65"
+            r="52"
+            fill="none"
+            stroke="rgba(212,175,55,0.12)"
+            strokeWidth="5"
+          />
+          <circle
+            cx="65"
+            cy="65"
+            r="52"
+            fill="none"
+            stroke="#d4af37"
+            strokeWidth="5"
+            strokeDasharray={`${circumference}`}
+            strokeDashoffset={`${circumference * (1 - pct / 100)}`}
+            strokeLinecap="round"
+            style={{ transition: "stroke-dashoffset 0.9s linear" }}
+          />
+        </svg>
+        <div className="absolute flex flex-col items-center justify-center">
+          <span
+            className="text-5xl"
+            style={{ animation: "pulseRing 1s ease-in-out infinite" }}
+          >
+            🔔
+          </span>
+          <span className="text-gold font-black text-xl tabular-nums mt-1">
+            {remainingSec}s
+          </span>
+        </div>
       </div>
+
       <div
         className="text-center"
         style={{ animation: "fadeSlideUp 0.5s 0.2s ease-out both" }}
       >
-        <p className="text-white/60 text-sm tracking-[0.3em] uppercase mb-1">
-          Waktu Azan
+        <p className="text-gold/60 text-xs tracking-[0.5em] uppercase font-semibold mb-2">
+          Waktu Shalat
         </p>
-        <p className="font-black text-4xl font-display text-[#fbbf24]">
-          {sim.prayer}
+        <p className="font-display font-black text-6xl text-gold mb-4">
+          {prayer}
         </p>
-        <p className="text-[#fbbf24]/60 text-xs mt-2 tracking-widest">
-          Countdown Iqamah dimulai…
-        </p>
+        <div className="flex items-center justify-center gap-3">
+          <div className="h-px w-16 bg-gold/25" />
+          <p className="text-white/40 text-sm tracking-widest">
+            Iqamah segera dimulai
+          </p>
+          <div className="h-px w-16 bg-gold/25" />
+        </div>
       </div>
     </div>
   );
 }
 
-// ── Iqamah countdown overlay ─────────────────────────────────────────────────
-function IqamahCountdownOverlay({ cs }: { cs: IqamahCountdown }) {
+// ── Overlay: Countdown Iqamah ─────────────────────────────────────────────────
+function IqamahCountdownOverlay({
+  prayer,
+  remainingSec,
+  totalSec,
+  isSim,
+}: {
+  prayer: string;
+  remainingSec: number;
+  totalSec: number;
+  isSim?: boolean;
+}) {
   const accent = "#60a5fa";
+  const pct = totalSec > 0 ? remainingSec / totalSec : 0;
+  const circumference = 2 * Math.PI * 80;
+  const m = String(Math.floor(remainingSec / 60)).padStart(2, "0");
+  const s = String(remainingSec % 60).padStart(2, "0");
+
   return (
     <div
-      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 rounded-2xl"
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl overflow-hidden"
       style={{
-        background: `linear-gradient(135deg, ${accent}18, ${accent}08)`,
-        border: `2px solid ${accent}60`,
+        background:
+          "radial-gradient(ellipse at 50% 50%, #001629 0%, #000d1a 55%, #000 100%)",
         animation: "fadeIn 0.8s ease-out both",
       }}
     >
-      {cs.isSim && (
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            width: 520,
+            height: 520,
+            background: `radial-gradient(circle, ${accent}12 0%, transparent 60%)`,
+            borderRadius: "50%",
+            animation: "pulseRing 3s ease-in-out infinite",
+          }}
+        />
+      </div>
+
+      {isSim && (
         <div className="absolute top-4 right-4 bg-violet-500/80 text-white text-[10px] font-bold px-2 py-0.5 rounded-full tracking-widest uppercase">
           SIMULASI
         </div>
       )}
 
-      <div
-        className="w-44 h-44 rounded-full flex items-center justify-center"
-        style={{
-          background: `radial-gradient(circle, ${accent}22 0%, transparent 70%)`,
-          boxShadow: `0 0 80px ${accent}40`,
-          animation: "pulseRing 2s ease-out infinite",
-        }}
-      >
-        <div
-          className="w-32 h-32 rounded-full flex flex-col items-center justify-center border-2"
-          style={{ borderColor: `${accent}80`, background: `${accent}15` }}
+      <p className="text-white/30 text-xs tracking-[0.6em] uppercase font-semibold mb-6">
+        Countdown Iqamah
+      </p>
+
+      {/* Lingkaran countdown besar */}
+      <div className="relative flex items-center justify-center mb-6">
+        <svg
+          width="220"
+          height="220"
+          viewBox="0 0 220 220"
+          className="-rotate-90"
         >
+          <circle
+            cx="110"
+            cy="110"
+            r="80"
+            fill="none"
+            stroke={`${accent}18`}
+            strokeWidth="7"
+          />
+          <circle
+            cx="110"
+            cy="110"
+            r="80"
+            fill="none"
+            stroke={accent}
+            strokeWidth="7"
+            strokeDasharray={`${circumference}`}
+            strokeDashoffset={`${circumference * (1 - pct)}`}
+            strokeLinecap="round"
+            style={{ transition: "stroke-dashoffset 0.9s linear" }}
+          />
+        </svg>
+        <div className="absolute flex flex-col items-center justify-center">
           <span
             className="font-black tabular-nums leading-none"
-            style={{ fontSize: "2.4rem", color: accent }}
+            style={{ fontSize: "3.5rem", color: accent }}
           >
-            {cs.remaining}
+            {m}:{s}
           </span>
           <span
-            className="text-[10px] mt-1 font-semibold tracking-widest uppercase"
-            style={{ color: `${accent}cc` }}
+            className="text-xs font-semibold tracking-widest uppercase mt-1"
+            style={{ color: `${accent}70` }}
           >
-            menit
+            menuju iqamah
           </span>
         </div>
       </div>
@@ -229,16 +404,276 @@ function IqamahCountdownOverlay({ cs }: { cs: IqamahCountdown }) {
         className="text-center"
         style={{ animation: "fadeSlideUp 0.6s 0.3s ease-out both" }}
       >
-        <p className="text-white/60 text-sm tracking-[0.3em] uppercase mb-1">
-          Iqamah {cs.prayer} dalam
+        <p className="text-white/30 text-xs tracking-[0.4em] uppercase mb-2">
+          Shalat
         </p>
         <p
-          className="font-black text-4xl font-display"
+          className="font-display font-black text-5xl"
           style={{ color: accent }}
         >
-          {cs.prayer}
+          {prayer}
+        </p>
+        <p className="text-white/25 text-sm mt-3 tracking-wide">
+          Segara senyapkan HP
         </p>
       </div>
+    </div>
+  );
+}
+
+// ── Overlay: Alarm Iqamah (sebelum overlay shalat) ───────────────────────────
+function IqamahAlarmOverlay({
+  prayer,
+  remainingSec,
+  isSim,
+}: {
+  prayer: string;
+  remainingSec: number;
+  isSim?: boolean;
+}) {
+  const pct = (remainingSec / IQAMAH_ALARM_DURATION) * 100;
+  const circumference = 2 * Math.PI * 52;
+
+  return (
+    <div
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl overflow-hidden"
+      style={{
+        background:
+          "radial-gradient(ellipse at 50% 60%, #1a0029 0%, #0d0018 50%, #000 100%)",
+        animation: "fadeIn 0.6s ease-out both",
+      }}
+    >
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            width: 480,
+            height: 480,
+            background:
+              "radial-gradient(circle, #a78bfa12 0%, transparent 60%)",
+            borderRadius: "50%",
+            animation: "pulseRing 2s ease-in-out infinite",
+          }}
+        />
+      </div>
+
+      {isSim && (
+        <div className="absolute top-4 right-4 bg-violet-500/80 text-white text-[10px] font-bold px-2 py-0.5 rounded-full tracking-widest uppercase">
+          SIMULASI
+        </div>
+      )}
+
+      <p
+        className="text-purple-300/40 text-3xl mb-4"
+        style={{ fontFamily: "serif" }}
+      >
+        الله أكبر
+      </p>
+
+      <div className="relative flex items-center justify-center mb-6">
+        <svg
+          width="130"
+          height="130"
+          viewBox="0 0 130 130"
+          className="-rotate-90"
+        >
+          <circle
+            cx="65"
+            cy="65"
+            r="52"
+            fill="none"
+            stroke="rgba(167,139,250,0.12)"
+            strokeWidth="5"
+          />
+          <circle
+            cx="65"
+            cy="65"
+            r="52"
+            fill="none"
+            stroke="#a78bfa"
+            strokeWidth="5"
+            strokeDasharray={`${circumference}`}
+            strokeDashoffset={`${circumference * (1 - pct / 100)}`}
+            strokeLinecap="round"
+            style={{ transition: "stroke-dashoffset 0.9s linear" }}
+          />
+        </svg>
+        <div className="absolute flex flex-col items-center justify-center">
+          <span
+            className="text-5xl"
+            style={{ animation: "pulseRing 1s ease-in-out infinite" }}
+          >
+            📿
+          </span>
+          <span className="text-purple-300 font-black text-xl tabular-nums mt-1">
+            {remainingSec}s
+          </span>
+        </div>
+      </div>
+
+      <div
+        className="text-center"
+        style={{ animation: "fadeSlideUp 0.5s 0.2s ease-out both" }}
+      >
+        <p className="text-purple-300/60 text-xs tracking-[0.5em] uppercase font-semibold mb-2">
+          Iqamah
+        </p>
+        <p className="font-display font-black text-6xl text-purple-300 mb-4">
+          {prayer}
+        </p>
+        <div className="flex items-center justify-center gap-3">
+          <div className="h-px w-16 bg-purple-300/25" />
+          <p className="text-white/40 text-sm tracking-widest">
+            Shalat segera dimulai
+          </p>
+          <div className="h-px w-16 bg-purple-300/25" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Overlay: Sedang Shalat ────────────────────────────────────────────────────
+function SalatOverlay({
+  prayer,
+  remainingSec,
+  totalSec,
+  isSim,
+}: {
+  prayer: string;
+  remainingSec: number;
+  totalSec: number;
+  isSim?: boolean;
+}) {
+  const accent = "#4ade80";
+  const pct = totalSec > 0 ? remainingSec / totalSec : 0;
+  const m = String(Math.floor(remainingSec / 60)).padStart(2, "0");
+  const s = String(remainingSec % 60).padStart(2, "0");
+
+  return (
+    <div
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl overflow-hidden"
+      style={{
+        background:
+          "radial-gradient(ellipse at 50% 40%, #001a0d 0%, #000e07 55%, #000 100%)",
+        animation: "fadeIn 0.8s ease-out both",
+      }}
+    >
+      {/* BG glow */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            width: 600,
+            height: 600,
+            background: `radial-gradient(circle, ${accent}0d 0%, transparent 60%)`,
+            borderRadius: "50%",
+            animation: "pulseRing 4s ease-in-out infinite",
+          }}
+        />
+      </div>
+
+      {/* Progress bar atas */}
+      <div
+        className="absolute top-0 left-0 right-0 h-1.5"
+        style={{ background: `${accent}18` }}
+      >
+        <div
+          className="h-full rounded-full"
+          style={{
+            width: `${pct * 100}%`,
+            background: `linear-gradient(to right, ${accent}80, ${accent})`,
+            transition: "width 0.9s linear",
+            boxShadow: `0 0 10px ${accent}60`,
+          }}
+        />
+      </div>
+
+      {isSim && (
+        <div className="absolute top-4 right-4 bg-violet-500/80 text-white text-[10px] font-bold px-2 py-0.5 rounded-full tracking-widest uppercase">
+          SIMULASI
+        </div>
+      )}
+
+      {/* Mosque icon */}
+      <div className="mb-5">
+        <div
+          className="w-24 h-24 rounded-full flex items-center justify-center text-5xl"
+          style={{
+            background: `${accent}12`,
+            border: `1.5px solid ${accent}35`,
+            animation: "pulseRing 3s ease-in-out infinite",
+            boxShadow: `0 0 40px ${accent}25`,
+          }}
+        >
+          🕌
+        </div>
+      </div>
+
+      <div
+        className="text-center mb-5"
+        style={{ animation: "fadeSlideUp 0.5s 0.2s ease-out both" }}
+      >
+        <p className="text-white/35 text-xs tracking-[0.6em] uppercase font-semibold mb-2">
+          Sedang Shalat
+        </p>
+        <p
+          className="font-display font-black text-6xl mb-5"
+          style={{ color: accent }}
+        >
+          {prayer}
+        </p>
+
+        {/* Instruksi */}
+        <div
+          className="flex flex-col items-center gap-2.5 px-8 py-4 rounded-2xl mx-auto"
+          style={{
+            background: `${accent}08`,
+            border: `1px solid ${accent}18`,
+            maxWidth: 340,
+          }}
+        >
+          {[
+            { icon: "📏", text: "Luruskan shaf" },
+            { icon: "🤝", text: "Rapatkan barisan" },
+            { icon: "📵", text: "Senyapkan handphone" },
+          ].map((item, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3"
+              style={{
+                animation: `fadeSlideUp 0.5s ${0.35 + i * 0.12}s ease-out both`,
+              }}
+            >
+              <span className="text-xl">{item.icon}</span>
+              <span className="text-white/75 font-semibold text-base tracking-wide">
+                {item.text}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Timer selesai shalat */}
+      <div className="flex items-center gap-3">
+        <div className="h-px w-12" style={{ background: `${accent}35` }} />
+        <span
+          className="font-black tabular-nums text-2xl"
+          style={{ color: `${accent}cc` }}
+        >
+          {m}:{s}
+        </span>
+        <div className="h-px w-12" style={{ background: `${accent}35` }} />
+      </div>
+      <p className="text-white/25 text-xs mt-1 tracking-widest">
+        estimasi selesai
+      </p>
     </div>
   );
 }
@@ -248,11 +683,62 @@ const DisplayPage = () => {
   const [now, setNow] = useState(new Date());
   const [activeSlide, setActiveSlide] = useState(0);
   const [tick, setTick] = useState(false);
+
+  // ── Fase display utama
+  const [displayPhase, setDisplayPhase] = useState<DisplayPhase>({
+    phase: "idle",
+  });
+  const phaseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Simulasi
   const [sim, setSim] = useState<SimState | null>(null);
   const simTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { fire } = useAlarm();
 
-  // ── BroadcastChannel: terima sinyal dari Settings tab ────────────────────
+  const { fire, stopAll } = useAlarm();
+
+  // ── Helper: mulai fase dengan timer ─────────────────────────────────────
+  const startPhaseTimer = useCallback(
+    (
+      initialPhase: DisplayPhase,
+      onTick: (prev: DisplayPhase) => DisplayPhase | null,
+    ) => {
+      if (phaseTimerRef.current) {
+        clearInterval(phaseTimerRef.current);
+        phaseTimerRef.current = null;
+      }
+      setDisplayPhase(initialPhase);
+      phaseTimerRef.current = setInterval(() => {
+        setDisplayPhase((prev) => {
+          const next = onTick(prev);
+          if (next === null) {
+            clearInterval(phaseTimerRef.current!);
+            phaseTimerRef.current = null;
+            return { phase: "idle" };
+          }
+          return next;
+        });
+      }, 1000);
+    },
+    [],
+  );
+
+  const clearPhase = useCallback(() => {
+    if (phaseTimerRef.current) {
+      clearInterval(phaseTimerRef.current);
+      phaseTimerRef.current = null;
+    }
+    setDisplayPhase({ phase: "idle" });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (phaseTimerRef.current) clearInterval(phaseTimerRef.current);
+      if (simTimerRef.current) clearInterval(simTimerRef.current);
+    },
+    [],
+  );
+
+  // ── BroadcastChannel: terima sinyal dari Settings tab ─────────────────
   useEffect(() => {
     const ch = new BroadcastChannel(BROADCAST_CHANNEL);
 
@@ -265,6 +751,8 @@ const DisplayPage = () => {
           simTimerRef.current = null;
         }
         setSim(null);
+        clearPhase();
+        stopAll();
         return;
       }
 
@@ -273,83 +761,174 @@ const DisplayPage = () => {
           clearInterval(simTimerRef.current);
           simTimerRef.current = null;
         }
+        stopAll();
 
-        // Fase 1: preview — 10 detik tampilan normal
+        // Fase 1: preview (10 detik normal)
         setSim({
           stage: "preview",
           previewLeft: PREVIEW_SECONDS,
           prayer: msg.prayer,
-          remainingSec: msg.durationSec,
-          total: msg.durationSec,
+          remainingSec: msg.iqamahDurationSec,
+          total: msg.iqamahDurationSec,
+          salatDurationSec: msg.salatDurationSec,
           adhanSoundPath: msg.adhanSoundPath,
           iqamahSoundPath: msg.iqamahSoundPath,
           adhanAlarmEnabled: msg.adhanAlarmEnabled,
           iqamahAlarmEnabled: msg.iqamahAlarmEnabled,
-          iqamahAlarmFired: false,
         });
+        clearPhase();
 
         simTimerRef.current = setInterval(() => {
           setSim((prev) => {
             if (!prev) return null;
 
-            // ── FASE PREVIEW ──────────────────────────────────────────────
+            // ── Preview countdown ──────────────────────────────────────
             if (prev.stage === "preview") {
               const next = prev.previewLeft - 1;
               if (next <= 0) {
-                // Preview habis → nyalakan alarm azan, lalu masuk adhan-alarm (1.5 detik)
+                // Mulai fase adhan overlay
                 if (prev.adhanAlarmEnabled) {
                   const audio = new Audio(prev.adhanSoundPath);
-                  audio
-                    .play()
-                    .catch(() => console.warn("Alarm azan sim gagal"));
+                  audio.play().catch(() => {});
                 }
-                // Setelah 1.5 detik, masuk fase countdown iqamah
-                setTimeout(() => {
-                  setSim((s) => (s ? { ...s, stage: "countdown" } : null));
-                }, 1500);
-                return { ...prev, stage: "adhan-alarm", previewLeft: 0 };
+                // Set display phase: adhan
+                setDisplayPhase({
+                  phase: "adhan",
+                  prayer: prev.prayer,
+                  remainingSec: ADHAN_ALARM_DURATION,
+                  isSim: true,
+                });
+                return {
+                  ...prev,
+                  stage: "adhan-alarm",
+                  remainingSec: ADHAN_ALARM_DURATION,
+                };
               }
               return { ...prev, previewLeft: next };
             }
 
-            // ── FASE ADHAN-ALARM (tunggu setTimeout di atas) ──────────────
-            if (prev.stage === "adhan-alarm") return prev;
-
-            // ── FASE COUNTDOWN IQAMAH ─────────────────────────────────────
-            if (prev.remainingSec <= 1 && !prev.iqamahAlarmFired) {
-              if (prev.iqamahAlarmEnabled) {
-                const audio = new Audio(prev.iqamahSoundPath);
-                audio
-                  .play()
-                  .catch(() => console.warn("Alarm iqamah sim gagal"));
+            // ── Adhan alarm countdown ──────────────────────────────────
+            if (prev.stage === "adhan-alarm") {
+              const next = prev.remainingSec - 1;
+              setDisplayPhase({
+                phase: "adhan",
+                prayer: prev.prayer,
+                remainingSec: next,
+                isSim: true,
+              });
+              if (next <= 0) {
+                // Masuk countdown iqamah
+                setDisplayPhase({
+                  phase: "iqamah",
+                  prayer: prev.prayer,
+                  remainingSec: prev.total,
+                  totalSec: prev.total,
+                  isSim: true,
+                });
+                return {
+                  ...prev,
+                  stage: "iqamah-countdown",
+                  remainingSec: prev.total,
+                };
               }
-              setTimeout(() => {
-                if (simTimerRef.current) {
-                  clearInterval(simTimerRef.current);
-                  simTimerRef.current = null;
-                }
-                setSim(null);
-              }, 3000);
-              return { ...prev, remainingSec: 0, iqamahAlarmFired: true };
+              return { ...prev, remainingSec: next };
             }
-            if (prev.iqamahAlarmFired) return prev;
-            return { ...prev, remainingSec: prev.remainingSec - 1 };
+
+            // ── Iqamah countdown ───────────────────────────────────────
+            if (prev.stage === "iqamah-countdown") {
+              const next = prev.remainingSec - 1;
+              setDisplayPhase({
+                phase: "iqamah",
+                prayer: prev.prayer,
+                remainingSec: next,
+                totalSec: prev.total,
+                isSim: true,
+              });
+              if (next <= 0) {
+                // Bunyikan alarm iqamah
+                if (prev.iqamahAlarmEnabled) {
+                  const audio = new Audio(prev.iqamahSoundPath);
+                  audio.play().catch(() => {});
+                }
+                // Masuk salat-alarm
+                setDisplayPhase({
+                  phase: "salat-alarm",
+                  prayer: prev.prayer,
+                  remainingSec: IQAMAH_ALARM_DURATION,
+                  isSim: true,
+                });
+                return {
+                  ...prev,
+                  stage: "salat-alarm",
+                  remainingSec: IQAMAH_ALARM_DURATION,
+                };
+              }
+              return { ...prev, remainingSec: next };
+            }
+
+            // ── Salat alarm countdown ──────────────────────────────────
+            if (prev.stage === "salat-alarm") {
+              const next = prev.remainingSec - 1;
+              setDisplayPhase({
+                phase: "salat-alarm",
+                prayer: prev.prayer,
+                remainingSec: next,
+                isSim: true,
+              });
+              if (next <= 0) {
+                const salatTotal = prev.salatDurationSec;
+                setDisplayPhase({
+                  phase: "salat",
+                  prayer: prev.prayer,
+                  remainingSec: salatTotal,
+                  totalSec: salatTotal,
+                  isSim: true,
+                });
+                return {
+                  ...prev,
+                  stage: "salat",
+                  remainingSec: salatTotal,
+                  total: salatTotal,
+                };
+              }
+              return { ...prev, remainingSec: next };
+            }
+
+            // ── Shalat overlay countdown ───────────────────────────────
+            if (prev.stage === "salat") {
+              const next = prev.remainingSec - 1;
+              setDisplayPhase({
+                phase: "salat",
+                prayer: prev.prayer,
+                remainingSec: next,
+                totalSec: prev.total,
+                isSim: true,
+              });
+              if (next <= 0) {
+                // Selesai simulasi
+                setTimeout(() => {
+                  if (simTimerRef.current) {
+                    clearInterval(simTimerRef.current);
+                    simTimerRef.current = null;
+                  }
+                  setSim(null);
+                  setDisplayPhase({ phase: "idle" });
+                }, 1500);
+                return { ...prev, remainingSec: 0 };
+              }
+              return { ...prev, remainingSec: next };
+            }
+
+            return prev;
           });
         }, 1000);
       }
     };
 
     return () => ch.close();
-  }, []);
+  }, [clearPhase, stopAll]);
 
-  useEffect(
-    () => () => {
-      if (simTimerRef.current) clearInterval(simTimerRef.current);
-    },
-    [],
-  );
-
-  // ── Queries ───────────────────────────────────────────────────────────────
+  // ── Queries ──────────────────────────────────────────────────────────────
   const {
     data: mosque,
     isLoading,
@@ -404,7 +983,7 @@ const DisplayPage = () => {
     return () => clearInterval(id);
   }, []);
 
-  // ── Prayer times ──────────────────────────────────────────────────────────
+  // ── Prayer times ─────────────────────────────────────────────────────────
   const prayerData = useMemo(() => {
     if (!mosque || mosque.latitude == null || mosque.longitude == null)
       return null;
@@ -450,82 +1029,166 @@ const DisplayPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mosque, now.toDateString()]);
 
-  // ── Real-time alarm & iqamah countdown ───────────────────────────────────
+  // ── Real-time phase logic ─────────────────────────────────────────────────
   //
-  // Alur nyata:
-  //   1. Tepat waktu azan (±5 detik window) → fire alarm azan
-  //   2. Setelah azan s/d iqamahCountdown berlalu → tampilkan countdown iqamah
-  //   3. Tepat iqamah (±5 detik) → fire alarm iqamah
+  // Alur nyata per waktu shalat:
+  //   1. Waktu azan tiba → phase "adhan" (ADHAN_ALARM_DURATION detik) + bunyi alarm azan
+  //   2. Selesai → phase "iqamah" (iqamahCountdownMinutes menit)
+  //   3. Countdown habis → phase "salat-alarm" (IQAMAH_ALARM_DURATION detik) + bunyi alarm iqamah
+  //   4. Selesai → phase "salat" (SALAT_DURATION_MINUTES menit)
+  //   5. Selesai → kembali idle
   //
-  const realIqamahCountdown = useMemo((): IqamahCountdown | null => {
-    if (!prayerData || !prayerSettings || sim) return null;
+  useEffect(() => {
+    if (!prayerData || !prayerSettings || sim) return;
 
     const iqamahMin = (prayerSettings.iqamahCountdownMinutes ?? 10) * 60;
     const nowSec = now.getTime() / 1000;
+    const today = moment(now).format("YYYY-MM-DD");
+
+    // Jangan proses ulang jika fase sudah aktif (bukan idle)
+    // Kita biarkan phaseTimer yang mengatur transisi antar fase
+    if (displayPhase.phase !== "idle") return;
 
     for (const prayer of prayerData) {
       const prayerSec = prayer.rawDate.getTime() / 1000;
-      const iqamahSec = prayerSec + iqamahMin;
+      const adhanEndSec = prayerSec + ADHAN_ALARM_DURATION;
+      const iqamahEndSec = prayerSec + iqamahMin;
+      const salatEndSec =
+        iqamahEndSec + IQAMAH_ALARM_DURATION + SALAT_DURATION_MINUTES * 60;
 
-      const diffToAdhan = nowSec - prayerSec; // positif = sudah lewat azan
-      const diffToIqamah = iqamahSec - nowSec; // positif = iqamah belum tiba
+      const diffToAdhan = nowSec - prayerSec;
 
-      // Alarm azan: tepat saat waktu azan (window ±5 detik)
-      if (
-        diffToAdhan >= 0 &&
-        diffToAdhan < 5 &&
-        prayerSettings.adhanAlarmEnabled
-      ) {
-        fire(
-          prayerSettings.adhanSoundPath,
-          `adhan-${prayer.nama}-${moment(now).format("YYYY-MM-DD")}`,
+      // Waktu azan: window 0 ~ ADHAN_ALARM_DURATION
+      if (diffToAdhan >= 0 && diffToAdhan < ADHAN_ALARM_DURATION) {
+        const remaining = Math.floor(ADHAN_ALARM_DURATION - diffToAdhan);
+
+        // Bunyi alarm azan (sekali)
+        if (prayerSettings.adhanAlarmEnabled) {
+          fire(prayerSettings.adhanSoundPath, `adhan-${prayer.nama}-${today}`);
+        }
+
+        // Mulai fase adhan
+        startPhaseTimer(
+          { phase: "adhan", prayer: prayer.nama, remainingSec: remaining },
+          (prev) => {
+            if (prev.phase !== "adhan") return null;
+            const next = prev.remainingSec - 1;
+            if (next <= 0) {
+              // Transisi ke iqamah countdown
+              return {
+                phase: "iqamah",
+                prayer: prev.prayer,
+                remainingSec: iqamahMin,
+                totalSec: iqamahMin,
+              };
+            }
+            return { ...prev, remainingSec: next };
+          },
         );
+        break;
       }
 
-      // Countdown iqamah: dari waktu azan sampai iqamah tiba
-      if (diffToAdhan >= 0 && diffToIqamah > 0) {
-        const m = Math.floor(diffToIqamah / 60);
-        const s = Math.floor(diffToIqamah % 60);
-        return {
-          prayer: prayer.nama,
-          remaining: `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`,
-          remainingSec: Math.floor(diffToIqamah),
-        };
+      // Iqamah countdown: window ADHAN_ALARM_DURATION ~ iqamahMin
+      if (diffToAdhan >= ADHAN_ALARM_DURATION && nowSec < iqamahEndSec) {
+        const elapsed = diffToAdhan - ADHAN_ALARM_DURATION;
+        const iqamahCountdownTotal = iqamahMin - ADHAN_ALARM_DURATION;
+        const remaining = Math.floor(iqamahCountdownTotal - elapsed);
+        if (remaining <= 0) continue;
+
+        startPhaseTimer(
+          {
+            phase: "iqamah",
+            prayer: prayer.nama,
+            remainingSec: remaining,
+            totalSec: iqamahCountdownTotal,
+          },
+          (prev) => {
+            if (prev.phase !== "iqamah") return null;
+            const next = prev.remainingSec - 1;
+            if (next <= 0) {
+              // Bunyi alarm iqamah, masuk salat-alarm
+              if (prayerSettings.iqamahAlarmEnabled) {
+                fire(
+                  prayerSettings.iqamahSoundPath,
+                  `iqamah-${prayer.nama}-${today}`,
+                );
+              }
+              return {
+                phase: "salat-alarm",
+                prayer: prev.prayer,
+                remainingSec: IQAMAH_ALARM_DURATION,
+              };
+            }
+            return { ...prev, remainingSec: next };
+          },
+        );
+        break;
       }
 
-      // Alarm iqamah: tepat saat iqamah tiba (window ±5 detik)
-      if (
-        diffToAdhan >= 0 &&
-        diffToIqamah >= -5 &&
-        diffToIqamah < 0 &&
-        prayerSettings.iqamahAlarmEnabled
-      ) {
-        fire(
-          prayerSettings.iqamahSoundPath,
-          `iqamah-${prayer.nama}-${moment(now).format("YYYY-MM-DD")}`,
+      // Salat alarm: window iqamahEnd ~ iqamahEnd + IQAMAH_ALARM_DURATION
+      const salatAlarmEnd = iqamahEndSec + IQAMAH_ALARM_DURATION;
+      if (nowSec >= iqamahEndSec && nowSec < salatAlarmEnd) {
+        const remaining = Math.floor(salatAlarmEnd - nowSec);
+
+        if (prayerSettings.iqamahAlarmEnabled) {
+          fire(
+            prayerSettings.iqamahSoundPath,
+            `iqamah-${prayer.nama}-${today}`,
+          );
+        }
+
+        const salatTotal = SALAT_DURATION_MINUTES * 60;
+        startPhaseTimer(
+          {
+            phase: "salat-alarm",
+            prayer: prayer.nama,
+            remainingSec: remaining,
+          },
+          (prev) => {
+            if (prev.phase !== "salat-alarm") return null;
+            const next = prev.remainingSec - 1;
+            if (next <= 0) {
+              return {
+                phase: "salat",
+                prayer: prev.prayer,
+                remainingSec: salatTotal,
+                totalSec: salatTotal,
+              };
+            }
+            return { ...prev, remainingSec: next };
+          },
         );
+        break;
+      }
+
+      // Shalat overlay: window salatAlarmEnd ~ salatEnd
+      if (nowSec >= salatAlarmEnd && nowSec < salatEndSec) {
+        const salatTotal = SALAT_DURATION_MINUTES * 60;
+        const elapsed = nowSec - salatAlarmEnd;
+        const remaining = Math.floor(salatTotal - elapsed);
+        if (remaining <= 0) continue;
+
+        startPhaseTimer(
+          {
+            phase: "salat",
+            prayer: prayer.nama,
+            remainingSec: remaining,
+            totalSec: salatTotal,
+          },
+          (prev) => {
+            if (prev.phase !== "salat") return null;
+            const next = prev.remainingSec - 1;
+            if (next <= 0) return null; // → idle
+            return { ...prev, remainingSec: next };
+          },
+        );
+        break;
       }
     }
-    return null;
-  }, [prayerData, prayerSettings, now, sim, fire]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now, prayerData, prayerSettings, sim]);
 
-  // Countdown yang ditampilkan: sim takes priority
-  const iqamahCountdown: IqamahCountdown | null = (() => {
-    if (sim && sim.stage === "countdown") {
-      return {
-        prayer: sim.prayer,
-        remaining: `${String(Math.floor(sim.remainingSec / 60)).padStart(2, "0")}:${String(sim.remainingSec % 60).padStart(2, "0")}`,
-        remainingSec: sim.remainingSec,
-        isSim: true,
-      };
-    }
-    return realIqamahCountdown;
-  })();
-
-  // Apakah ada sesuatu yang menggelapkan slider?
-  const sliderDimmed = !!iqamahCountdown || sim?.stage === "adhan-alarm";
-
-  // ── Slide rotation ────────────────────────────────────────────────────────
+  // ── Slide rotation ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!displayImages || displayImages.length <= 1) {
       setActiveSlide(0);
@@ -538,6 +1201,7 @@ const DisplayPage = () => {
     return () => clearInterval(id);
   }, [displayImages]);
 
+  // ── Derived state ────────────────────────────────────────────────────────
   const currentSlide = displayImages?.length
     ? displayImages[activeSlide % displayImages.length]
     : null;
@@ -545,6 +1209,10 @@ const DisplayPage = () => {
   const nextIdx = prayerData?.findIndex((s) => s.waktu > currentTimeStr) ?? -1;
   const nextName =
     nextIdx >= 0 ? prayerData?.[nextIdx]?.nama : prayerData?.[0]?.nama;
+
+  // Apakah slider harus di-dim
+  const sliderDimmed =
+    displayPhase.phase !== "idle" || (sim?.stage === "preview" ? false : !!sim);
 
   // Running text
   const financeText = weeklyFinance
@@ -568,7 +1236,7 @@ const DisplayPage = () => {
         .join("   ✦   ") + (financeText ? `   ✦   ${financeText}` : "")
     : `SELAMAT DATANG DI ${(mosque?.name ?? "MASJID").toUpperCase()} — JAGALAH KEBERSIHAN MASJID KITA BERSAMA.${financeText ? `   ✦   ${financeText}` : ""}`;
 
-  // ── Loading / error screens ───────────────────────────────────────────────
+  // ── Loading / error screens ──────────────────────────────────────────────
   if (isLoading)
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-[#0a1f14] gap-4">
@@ -611,7 +1279,7 @@ const DisplayPage = () => {
         @keyframes fadeIn        { from { opacity: 0 } to { opacity: 1 } }
         @keyframes fadeSlideDown { from { opacity: 0; transform: translateX(-50%) translateY(-16px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
         @keyframes fadeSlideUp   { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: translateY(0) } }
-        @keyframes pulseRing     { 0%,100% { opacity: 0.8 } 50% { opacity: 1 } }
+        @keyframes pulseRing     { 0%,100% { opacity: 0.8; transform: scale(1) } 50% { opacity: 1; transform: scale(1.03) } }
       `}</style>
 
       <div className="w-screen h-screen bg-[#071410] overflow-hidden flex flex-col select-none">
@@ -680,29 +1348,45 @@ const DisplayPage = () => {
             {prayerData.map((item, idx) => {
               const isNext = nextName === item.nama;
               const style = PRAYER_STYLES[idx];
+              // Highlight jika sedang dalam fase shalat ini
+              const isActive =
+                displayPhase.phase !== "idle" &&
+                "prayer" in displayPhase &&
+                displayPhase.prayer === item.nama;
               return (
                 <div
                   key={item.nama}
-                  className={`relative flex items-center gap-5 rounded-2xl px-6 py-5 transition-all duration-500 ${isNext ? "" : "bg-white/3 border border-white/10"}`}
+                  className={`relative flex items-center gap-5 rounded-2xl px-6 py-5 transition-all duration-500`}
                   style={
-                    isNext
+                    isActive
                       ? {
-                          background: `linear-gradient(135deg, ${style.accent}22, ${style.accent}08)`,
-                          border: `1.5px solid ${style.accent}80`,
+                          background: `linear-gradient(135deg, ${style.accent}30, ${style.accent}12)`,
+                          border: `2px solid ${style.accent}`,
+                          boxShadow: `0 0 20px ${style.accent}30`,
                         }
-                      : {}
+                      : isNext
+                        ? {
+                            background: `linear-gradient(135deg, ${style.accent}22, ${style.accent}08)`,
+                            border: `1.5px solid ${style.accent}80`,
+                          }
+                        : {
+                            background: "rgba(255,255,255,0.03)",
+                            border: "1px solid rgba(255,255,255,0.08)",
+                          }
                   }
                 >
                   <div
                     className="absolute left-0 top-4 bottom-4 w-1.5 rounded-full"
                     style={{
-                      background: isNext ? style.accent : `${style.accent}40`,
+                      background:
+                        isActive || isNext ? style.accent : `${style.accent}40`,
                     }}
                   />
                   <div
                     className="text-5xl shrink-0"
                     style={{
-                      color: isNext ? style.accent : `${style.accent}80`,
+                      color:
+                        isActive || isNext ? style.accent : `${style.accent}80`,
                     }}
                   >
                     {item.icon}
@@ -712,12 +1396,29 @@ const DisplayPage = () => {
                       className="font-bold leading-none"
                       style={{
                         fontSize: "1.5rem",
-                        color: isNext ? "#fff" : "rgba(255,255,255,0.7)",
+                        color:
+                          isActive || isNext ? "#fff" : "rgba(255,255,255,0.7)",
                       }}
                     >
                       {item.nama}
                     </p>
-                    {isNext && (
+                    {isActive && (
+                      <p
+                        className="text-xs mt-1 tracking-[0.2em] uppercase font-semibold animate-pulse"
+                        style={{ color: style.accent }}
+                      >
+                        {displayPhase.phase === "adhan"
+                          ? "Azan"
+                          : displayPhase.phase === "iqamah"
+                            ? "Countdown Iqamah"
+                            : displayPhase.phase === "salat-alarm"
+                              ? "Iqamah"
+                              : displayPhase.phase === "salat"
+                                ? "Shalat Berlangsung"
+                                : ""}
+                      </p>
+                    )}
+                    {!isActive && isNext && (
                       <p
                         className="text-xs mt-1 tracking-[0.2em] uppercase"
                         style={{ color: style.accent }}
@@ -729,8 +1430,11 @@ const DisplayPage = () => {
                   <p
                     className="font-black tabular-nums tracking-tight"
                     style={{
-                      fontSize: isNext ? "3rem" : "2.5rem",
-                      color: isNext ? style.accent : "rgba(255,255,255,0.85)",
+                      fontSize: isActive || isNext ? "3rem" : "2.5rem",
+                      color:
+                        isActive || isNext
+                          ? style.accent
+                          : "rgba(255,255,255,0.85)",
                     }}
                   >
                     {item.waktu}
@@ -749,12 +1453,36 @@ const DisplayPage = () => {
               {/* Preview badge saat sim.stage === "preview" */}
               {sim && <PreviewBadge sim={sim} />}
 
-              {/* Adhan flash overlay saat sim.stage === "adhan-alarm" */}
-              {sim && <AdhanFlashOverlay sim={sim} />}
-
-              {/* Iqamah countdown overlay */}
-              {iqamahCountdown && (
-                <IqamahCountdownOverlay cs={iqamahCountdown} />
+              {/* ── Overlay sesuai fase ── */}
+              {displayPhase.phase === "adhan" && (
+                <AdhanOverlay
+                  prayer={displayPhase.prayer}
+                  remainingSec={displayPhase.remainingSec}
+                  isSim={displayPhase.isSim}
+                />
+              )}
+              {displayPhase.phase === "iqamah" && (
+                <IqamahCountdownOverlay
+                  prayer={displayPhase.prayer}
+                  remainingSec={displayPhase.remainingSec}
+                  totalSec={displayPhase.totalSec}
+                  isSim={displayPhase.isSim}
+                />
+              )}
+              {displayPhase.phase === "salat-alarm" && (
+                <IqamahAlarmOverlay
+                  prayer={displayPhase.prayer}
+                  remainingSec={displayPhase.remainingSec}
+                  isSim={displayPhase.isSim}
+                />
+              )}
+              {displayPhase.phase === "salat" && (
+                <SalatOverlay
+                  prayer={displayPhase.prayer}
+                  remainingSec={displayPhase.remainingSec}
+                  totalSec={displayPhase.totalSec}
+                  isSim={displayPhase.isSim}
+                />
               )}
 
               {/* Slider image */}
@@ -765,14 +1493,13 @@ const DisplayPage = () => {
                     src={currentSlide.imageUrl}
                     alt="Slide Display"
                     fill
-                    className={`object-cover transition-opacity duration-1000 ${sliderDimmed ? "opacity-20" : "opacity-100"}`}
+                    className={`object-cover transition-opacity duration-1000 ${sliderDimmed ? "opacity-10" : "opacity-100"}`}
                     priority
                   />
                   <div className="absolute inset-0 bg-linear-to-t from-black/20 via-transparent to-transparent" />
                   {displayImages &&
                     displayImages.length > 1 &&
-                    !sliderDimmed &&
-                    !sim && (
+                    !sliderDimmed && (
                       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
                         {displayImages.map((img, idx) => (
                           <span
