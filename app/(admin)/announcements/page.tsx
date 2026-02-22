@@ -1,10 +1,11 @@
 "use client";
 
 import { AxiosError } from "axios";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/axios";
-import { Trash2, Loader2 } from "lucide-react";
+import { Trash2, Loader2, Pencil, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -32,8 +33,152 @@ interface ErrorResponse {
 const MAX_ANNOUNCEMENTS = 5;
 const MAX_CHARS = 200;
 
+// ── Inline edit row ────────────────────────────────────────────────────────────
+function EditableRow({
+  announcement,
+  index,
+  onDeleted,
+  onUpdated,
+}: {
+  announcement: Announcement;
+  index: number;
+  onDeleted: () => void;
+  onUpdated: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(announcement.content);
+
+  const deleteMutation = useMutation({
+    mutationFn: async () =>
+      api.delete(`/admin/announcements/${announcement.id}`),
+    onSuccess: () => {
+      toast.success("Pengumuman berhasil dihapus");
+      onDeleted();
+    },
+    onError: () => toast.error("Gagal menghapus pengumuman"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (content: string) =>
+      api.patch(`/admin/announcements/${announcement.id}`, { content }),
+    onSuccess: () => {
+      toast.success("Pengumuman berhasil diperbarui");
+      setEditing(false);
+      onUpdated();
+    },
+    onError: (error: AxiosError<ErrorResponse>) => {
+      toast.error(
+        error.response?.data?.error || "Gagal memperbarui pengumuman",
+      );
+    },
+  });
+
+  const handleSave = () => {
+    if (!editValue.trim()) {
+      toast.error("Isi pengumuman tidak boleh kosong");
+      return;
+    }
+    updateMutation.mutate(editValue);
+  };
+
+  const handleCancel = () => {
+    setEditValue(announcement.content);
+    setEditing(false);
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-3 py-4">
+      <div className="space-y-1 flex-1 min-w-0">
+        <p className="text-xs text-muted-foreground">#{index + 1}</p>
+        {editing ? (
+          <div className="space-y-2">
+            <Textarea
+              className="min-h-20 text-sm"
+              maxLength={MAX_CHARS}
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground text-right">
+              {editValue.length}/{MAX_CHARS} karakter
+            </p>
+          </div>
+        ) : (
+          <p className="font-medium text-emerald-950 wrap-break-word">
+            {announcement.content}
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-1.5 shrink-0">
+        {editing ? (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              disabled={updateMutation.isPending}
+              onClick={handleSave}
+            >
+              {updateMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Check className="h-4 w-4" />
+              )}
+              Simpan
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={updateMutation.isPending}
+              onClick={handleCancel}
+            >
+              <X className="h-4 w-4" />
+              Batal
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={deleteMutation.isPending}
+              onClick={() => setEditing(true)}
+            >
+              <Pencil className="h-4 w-4" />
+              Edit
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => deleteMutation.mutate()}
+            >
+              {deleteMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              Hapus
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 const AnnouncementsPage = () => {
   const queryClient = useQueryClient();
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["announcements"] });
+    queryClient.invalidateQueries({ queryKey: ["public-announcements"] });
+  };
 
   const form = useForm<AnnouncementForm>({
     mode: "onChange",
@@ -53,23 +198,12 @@ const AnnouncementsPage = () => {
       api.post("admin/announcements", payload),
     onSuccess: () => {
       form.reset();
-      queryClient.invalidateQueries({ queryKey: ["announcements"] });
-      queryClient.invalidateQueries({ queryKey: ["public-announcements"] });
+      invalidate();
       toast.success("Pengumuman berhasil dibuat");
     },
     onError: (error: AxiosError<ErrorResponse>) => {
       toast.error(error.response?.data?.error || "Gagal membuat pengumuman");
     },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => api.delete(`/admin/announcements/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["announcements"] });
-      queryClient.invalidateQueries({ queryKey: ["public-announcements"] });
-      toast.success("Pengumuman berhasil dihapus");
-    },
-    onError: () => toast.error("Gagal menghapus pengumuman"),
   });
 
   const announcements = announcementItems ?? [];
@@ -181,30 +315,12 @@ const AnnouncementsPage = () => {
             <div className="space-y-0">
               {announcements.map((announcement, index) => (
                 <div key={announcement.id}>
-                  <div className="flex items-start justify-between gap-3 py-4">
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">
-                        #{index + 1}
-                      </p>
-                      <p className="font-medium text-emerald-950">
-                        {announcement.content}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      disabled={deleteMutation.isPending}
-                      onClick={() => deleteMutation.mutate(announcement.id)}
-                    >
-                      {deleteMutation.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                      Hapus
-                    </Button>
-                  </div>
+                  <EditableRow
+                    announcement={announcement}
+                    index={index}
+                    onDeleted={invalidate}
+                    onUpdated={invalidate}
+                  />
                   {index < announcements.length - 1 && <Separator />}
                 </div>
               ))}

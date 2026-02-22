@@ -31,6 +31,25 @@ export const createAnnouncement = async (content: string) => {
   });
 };
 
+export const updateAnnouncement = async (id: string, content: string) => {
+  const trimmedContent = content.trim();
+
+  if (!trimmedContent) {
+    throw new Error("Isi pengumuman tidak boleh kosong");
+  }
+
+  const existing = await prisma.announcement.findUnique({ where: { id } });
+
+  if (!existing) {
+    throw new Error("Pengumuman tidak ditemukan");
+  }
+
+  return prisma.announcement.update({
+    where: { id },
+    data: { content: trimmedContent },
+  });
+};
+
 export const deleteAnnouncement = async (id: string) => {
   return prisma.announcement.delete({
     where: {

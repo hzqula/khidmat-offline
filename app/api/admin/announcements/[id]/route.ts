@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { deleteAnnouncement } from "@/lib/announcement";
+import { deleteAnnouncement, updateAnnouncement } from "@/lib/announcement";
+
 export const DELETE = async (
   _: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -16,11 +17,47 @@ export const DELETE = async (
 
     const { id } = await params;
     await deleteAnnouncement(id);
-    return NextResponse.json({}, { status: 200 });
+
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error(error);
     return NextResponse.json(
       { error: "Gagal menghapus pengumuman" },
+      { status: 500 },
+    );
+  }
+};
+
+export const PATCH = async (
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) => {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Belum login" }, { status: 401 });
+    }
+
+    const { id } = await params;
+    const body = await req.json();
+    const updated = await updateAnnouncement(id, body?.content ?? "");
+
+    return NextResponse.json(updated);
+  } catch (error) {
+    if (error instanceof Error) {
+      if (
+        error.message === "Isi pengumuman tidak boleh kosong" ||
+        error.message === "Pengumuman tidak ditemukan"
+      ) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+    }
+    console.error(error);
+    return NextResponse.json(
+      { error: "Gagal memperbarui pengumuman" },
       { status: 500 },
     );
   }
