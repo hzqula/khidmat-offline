@@ -31,15 +31,16 @@ model Mosque {
   @@map("mosques")
 }
 
-model Profile {
-  id    String @id @default(uuid())
-  email String @unique
-  name  String
+model User {
+  id       String @id @default(uuid())
+  email    String @unique
+  password String
+  name     String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@map("profiles")
+  @@map("users")
 }
 
 model Announcement {
@@ -90,20 +91,14 @@ model FinanceTransaction {
   @@map("finance_transactions")
 }
 
-// Alur: Alarm Azan berbunyi → Countdown Iqamah tampil → Alarm Iqamah berbunyi
 model PrayerSettings {
   id String @id @default(uuid())
 
-  // Durasi countdown iqamah setelah azan berbunyi (5 | 10 | 15 menit)
   iqamahCountdownMinutes Int @default(10)
 
-  // Path file suara alarm azan (relatif ke /public)
-  adhanSoundPath String @default("/sounds/adhan-default.mp3")
-
-  // Path file suara alarm iqamah
+  adhanSoundPath  String @default("/sounds/adhan-default.mp3")
   iqamahSoundPath String @default("/sounds/iqamah-default.mp3")
 
-  // Aktifkan/nonaktifkan masing-masing alarm
   adhanAlarmEnabled  Boolean @default(true)
   iqamahAlarmEnabled Boolean @default(true)
 

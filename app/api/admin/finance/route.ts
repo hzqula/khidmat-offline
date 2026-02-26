@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireAuth } from "@/lib/session";
 import {
   createFinanceTransaction,
   FinanceCategory,
@@ -18,26 +18,9 @@ const isValidType = (value: unknown): value is FinanceType => {
   return ["PEMASUKAN", "PENGELUARAN"].includes(value as FinanceType);
 };
 
-const guardSession = async () => {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Belum login" }, { status: 401 });
-  }
-
-  return null;
-};
-
 export const GET = async () => {
   try {
-    const unauthorized = await guardSession();
-
-    if (unauthorized) {
-      return unauthorized;
-    }
+    await requireAuth();
 
     const [summary, transactions] = await Promise.all([
       getWeeklyFinanceSummary(),
@@ -56,11 +39,7 @@ export const GET = async () => {
 
 export const POST = async (req: Request) => {
   try {
-    const unauthorized = await guardSession();
-
-    if (unauthorized) {
-      return unauthorized;
-    }
+    await requireAuth();
 
     const body = await req.json();
 

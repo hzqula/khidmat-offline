@@ -1,39 +1,35 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/session";
+import bcrypt from "bcryptjs";
 
 export async function register(_: unknown, formData: FormData) {
-  const supabase = await createClient();
-  const email = formData.get("email") as string;
-  const password = formData.get("password") as string;
-  const fullName = formData.get("fullName") as string;
-
   if (process.env.ALLOW_PUBLIC_REGISTRATION === "false") {
     return { error: "Pendaftaran publik tidak diizinkan." };
   }
 
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const email = formData.get("email") as string;
+  const password = formData.get("password") as string;
+  const fullName = formData.get("fullName") as string;
 
-  if (error) return { error: error.message };
-
-  if (data.user) {
-    await prisma.profile.upsert({
-      where: {
-        id: data.user.id,
-      },
-      update: {
-        email,
-        name: fullName,
-      },
-      create: {
-        id: data.user.id,
-        email,
-        name: fullName,
-      },
-    });
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    return { error: "Email sudah terdaftar." };
   }
+
+  const hashed = await bcrypt.hash(password, 12);
+
+  const user = await prisma.user.create({
+    data: { email, password: hashed, name: fullName },
+  });
+
+  const session = await getSession();
+  session.userId = user.id;
+  session.email = user.email;
+  session.name = user.name;
+  await session.save();
 
   redirect("/dashboard");
 }

@@ -1,17 +1,10 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireAuth } from "@/lib/session";
 import { createAnnouncement, listAnnouncements } from "@/lib/announcement";
 
 export const GET = async () => {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Belum login" }, { status: 401 });
-    }
+    requireAuth();
 
     const announcements = await listAnnouncements();
     return NextResponse.json(announcements);
@@ -26,14 +19,7 @@ export const GET = async () => {
 
 export const POST = async (req: Request) => {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Belum login" }, { status: 401 });
-    }
+    await requireAuth();
 
     const body = await req.json();
     const created = await createAnnouncement(body?.content ?? "");

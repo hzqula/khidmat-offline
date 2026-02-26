@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { requireAuth } from "@/lib/session";
 import { deleteAnnouncement, updateAnnouncement } from "@/lib/announcement";
 
 export const DELETE = async (
@@ -7,13 +7,7 @@ export const DELETE = async (
   { params }: { params: Promise<{ id: string }> },
 ) => {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: "Belum login" }, { status: 401 });
-    }
+    await requireAuth();
 
     const { id } = await params;
     await deleteAnnouncement(id);
@@ -33,13 +27,7 @@ export const PATCH = async (
   { params }: { params: Promise<{ id: string }> },
 ) => {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: "Belum login" }, { status: 401 });
-    }
+    await requireAuth();
 
     const { id } = await params;
     const body = await req.json();

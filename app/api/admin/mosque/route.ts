@@ -1,17 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/session";
 import { getOrCreateMosque, updateMosque } from "@/lib/mosque";
 
 export const GET = async () => {
   try {
-    const supabase = await createClient();
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user)
-      return NextResponse.json({ error: "Belum login" }, { status: 401 });
+    await requireAuth();
     const mosque = await getOrCreateMosque();
     return NextResponse.json(mosque);
   } catch (error) {
@@ -25,14 +18,7 @@ export const GET = async () => {
 
 export const POST = async (req: Request) => {
   try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user)
-      return NextResponse.json({ error: "Belum login" }, { status: 401 });
-
+    await requireAuth();
     const body = await req.json();
     const { id, ...mosqueData } = body;
     const mosque = await updateMosque(mosqueData);

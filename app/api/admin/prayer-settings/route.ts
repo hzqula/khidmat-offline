@@ -1,28 +1,20 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import {
   getPrayerSettings,
   updatePrayerSettings,
   COUNTDOWN_OPTIONS,
   type CountdownMinutes,
 } from "@/lib/prayer-settings";
-
-const guardSession = async () => {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user)
-    return NextResponse.json({ error: "Belum login" }, { status: 401 });
-  return null;
-};
+import { requireAuth } from "@/lib/session";
 
 export const GET = async () => {
   try {
-    const unauthorized = await guardSession();
-    if (unauthorized) return unauthorized;
+    await requireAuth();
     return NextResponse.json(await getPrayerSettings());
   } catch (e) {
+    if (e instanceof Error && e.message === "Unauthorized") {
+      return NextResponse.json({ error: "Belum login" }, { status: 401 });
+    }
     console.error(e);
     return NextResponse.json(
       { error: "Gagal mengambil pengaturan" },
@@ -33,8 +25,7 @@ export const GET = async () => {
 
 export const POST = async (req: Request) => {
   try {
-    const unauthorized = await guardSession();
-    if (unauthorized) return unauthorized;
+    await requireAuth();
 
     const body = await req.json();
     const iqamahCountdown = Number(body?.iqamahCountdownMinutes);
@@ -56,6 +47,9 @@ export const POST = async (req: Request) => {
 
     return NextResponse.json(updated);
   } catch (e) {
+    if (e instanceof Error && e.message === "Unauthorized") {
+      return NextResponse.json({ error: "Belum login" }, { status: 401 });
+    }
     console.error(e);
     return NextResponse.json(
       { error: "Gagal menyimpan pengaturan" },

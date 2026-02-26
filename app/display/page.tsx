@@ -15,6 +15,7 @@ import type { DisplayImage } from "@/lib/types/display-image";
 import type { WeeklyFinanceSummary } from "@/lib/types/finance";
 import type { PrayerSettings } from "@/lib/types/prayer-settings";
 import type { SimMessage } from "@/app/(admin)/settings/page";
+import { Mosque } from "@/lib/types/mosque";
 
 // ─────────────────────────────────────────────────────────────────────────────
 const BROADCAST_CHANNEL = "khidmat-display-sim";
@@ -31,15 +32,6 @@ const PRAYER_STYLES = [
   { accent: "#a78bfa" },
 ];
 
-// ── Types ────────────────────────────────────────────────────────────────────
-/**
- * Urutan fase display:
- *  idle        → tampilan normal
- *  adhan       → overlay "Sedang Azan" + bunyi alarm azan (ADHAN_ALARM_DURATION detik)
- *  iqamah      → overlay countdown iqamah (N menit dari settings)
- *  salat-alarm → overlay "Iqamah" + bunyi alarm iqamah (IQAMAH_ALARM_DURATION detik)
- *  salat       → overlay "Sedang Shalat, Luruskan Shaf" (SALAT_DURATION_MINUTES menit)
- */
 type DisplayPhase =
   | { phase: "idle" }
   | { phase: "adhan"; prayer: string; remainingSec: number; isSim?: boolean }
@@ -84,7 +76,7 @@ type SimState = {
   iqamahAlarmEnabled: boolean;
 };
 
-// ── Alarm hook ────────────────────────────────────────────────────────────────
+// ── Alarm hook
 function useAlarm() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const firedRef = useRef<Set<string>>(new Set());
@@ -933,7 +925,7 @@ const DisplayPage = () => {
     data: mosque,
     isLoading,
     isError,
-  } = useQuery({
+  } = useQuery<Mosque>({
     queryKey: ["mosque-settings"],
     queryFn: async () => {
       const { data } = await api.get("/public/mosque");
@@ -1290,7 +1282,7 @@ const DisplayPage = () => {
               <FaMosque className="text-gold text-4xl" />
             </div>
             <h1 className="text-gold font-display font-extrabold text-5xl leading-tight tracking-wide truncate">
-              {mosque.name}
+              {mosque?.name}
             </h1>
           </div>
 
@@ -1327,9 +1319,10 @@ const DisplayPage = () => {
             </p>
             <p className="text-white font-semibold text-base leading-snug">
               <FaLocationDot className="inline mr-1.5 text-gold" />
-              {mosque.address}
+              {mosque?.address}
             </p>
-            <p className="text-gold/80 text-sm mt-0.5">{mosque.city}</p>
+            <p>{mosque?.district}</p>
+            <p className="text-gold/80 text-sm mt-0.5">{mosque?.city}</p>
           </div>
         </header>
 
