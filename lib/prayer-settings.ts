@@ -10,6 +10,12 @@ export interface PrayerSettingsInput {
   iqamahSoundPath: string;
   adhanAlarmEnabled: boolean;
   iqamahAlarmEnabled: boolean;
+  /** Durasi overlay shalat biasa (menit) */
+  salatDurationMinutes: number;
+  /** Durasi Khutbah Jum'at sebelum iqamah (menit) */
+  jumaahKhutbahMinutes: number;
+  /** Durasi overlay shalat Jum'at (menit) */
+  jumaahSalatDurationMinutes: number;
 }
 
 /** Ambil pengaturan, buat record default jika belum ada */
@@ -26,6 +32,9 @@ export async function getPrayerSettings() {
       iqamahSoundPath: "/sounds/iqamah-default.mp3",
       adhanAlarmEnabled: true,
       iqamahAlarmEnabled: true,
+      salatDurationMinutes: 20,
+      jumaahKhutbahMinutes: 30,
+      jumaahSalatDurationMinutes: 15,
     },
   });
 }

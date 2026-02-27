@@ -25,8 +25,10 @@ import {
   Radio,
   StopCircle,
   ChevronRight,
+  BookOpen,
 } from "lucide-react";
 import { PrayerSettings } from "@/lib/types/prayer-settings";
+import { FaMosque } from "react-icons/fa6";
 
 // ── Daftar suara di /public/sounds/ ──────────────────────────────────────────
 const ADHAN_SOUNDS: { label: string; path: string }[] = [
@@ -46,6 +48,15 @@ type PrayerName = (typeof PRAYER_NAMES)[number];
 
 const COUNTDOWN_OPTIONS = [5, 10, 15] as const;
 
+// Opsi durasi shalat biasa
+const SALAT_DURATION_OPTIONS = [10, 15, 20, 25, 30] as const;
+
+// Opsi durasi khutbah Jum'at
+const JUMAAH_KHUTBAH_OPTIONS = [15, 20, 25, 30, 35, 40, 45] as const;
+
+// Opsi durasi shalat Jum'at
+const JUMAAH_SALAT_OPTIONS = [10, 12, 15, 20] as const;
+
 export const BROADCAST_CHANNEL = "khidmat-display-sim";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -55,23 +66,16 @@ type FormValues = {
   iqamahSoundPath: string;
   adhanAlarmEnabled: boolean;
   iqamahAlarmEnabled: boolean;
+  salatDurationMinutes: number;
+  jumaahKhutbahMinutes: number;
+  jumaahSalatDurationMinutes: number;
 };
 
-/**
- * Alur simulasi yang dikirim ke display:
- *   preview (10s) → adhan overlay (adhanAlarmDuration)
- *   → iqamah countdown (iqamahDurationSec)
- *   → salat-alarm overlay (iqamahAlarmDuration)
- *   → salat overlay (salatDurationSec)
- *   → selesai / STOP_SIM
- */
 export type SimMessage =
   | {
       type: "START_SIM";
       prayer: PrayerName;
-      /** Durasi countdown iqamah dalam detik (untuk simulasi, bisa lebih pendek) */
       iqamahDurationSec: number;
-      /** Durasi overlay shalat dalam detik (untuk simulasi) */
       salatDurationSec: number;
       adhanSoundPath: string;
       iqamahSoundPath: string;
@@ -84,7 +88,6 @@ interface ErrorResponse {
   error: string;
 }
 
-// ── Durasi simulasi yang bisa dipilih ────────────────────────────────────────
 const SIM_IQAMAH_DURATIONS = [
   { label: "15 detik", value: 15 },
   { label: "30 detik", value: 30 },
@@ -97,7 +100,6 @@ const SIM_SALAT_DURATIONS = [
   { label: "1 menit", value: 60 },
 ];
 
-// ── Fase simulasi (untuk progress panel) ─────────────────────────────────────
 type SimPhase =
   | "preview"
   | "adhan"
@@ -124,66 +126,23 @@ const PHASE_COLORS: Record<SimPhase, string> = {
   done: "bg-gray-400",
 };
 
-// ── Hooks ────────────────────────────────────────────────────────────────────
-function useSoundPreview() {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [playing, setPlaying] = useState<string | null>(null);
-
-  const play = (path: string) => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-      if (playing === path) {
-        setPlaying(null);
-        return;
-      }
-    }
-    const audio = new Audio(path);
-    audioRef.current = audio;
-    setPlaying(path);
-    audio
-      .play()
-      .catch(() => toast.error("File suara tidak ditemukan: " + path));
-    audio.onended = () => {
-      setPlaying(null);
-      audioRef.current = null;
-    };
-  };
-
-  useEffect(
-    () => () => {
-      audioRef.current?.pause();
-    },
-    [],
-  );
-  return { play, playing };
-}
-
-function useBroadcast() {
-  const chRef = useRef<BroadcastChannel | null>(null);
-  useEffect(() => {
-    chRef.current = new BroadcastChannel(BROADCAST_CHANNEL);
-    return () => chRef.current?.close();
-  }, []);
-  const send = useCallback((msg: SimMessage) => {
-    chRef.current?.postMessage(msg);
-  }, []);
-  return { send };
-}
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-function CountdownPicker({
+// ── Generic picker sub-components ────────────────────────────────────────────
+function OptionPicker<T extends number>({
+  options,
   value,
   onChange,
   disabled,
+  unit,
 }: {
-  value: number;
-  onChange: (v: 5 | 10 | 15) => void;
+  options: readonly T[];
+  value: T;
+  onChange: (v: T) => void;
   disabled?: boolean;
+  unit: string;
 }) {
   return (
-    <div className="flex gap-2">
-      {COUNTDOWN_OPTIONS.map((opt) => (
+    <div className="flex flex-wrap gap-2">
+      {options.map((opt) => (
         <button
           key={opt}
           type="button"
@@ -202,7 +161,7 @@ function CountdownPicker({
         >
           <span className="text-xl font-bold leading-none">{opt}</span>
           <span className="text-[10px] font-normal mt-0.5 opacity-70">
-            menit
+            {unit}
           </span>
           {value === opt && (
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500" />
@@ -210,6 +169,26 @@ function CountdownPicker({
         </button>
       ))}
     </div>
+  );
+}
+
+function CountdownPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (v: 5 | 10 | 15) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <OptionPicker
+      options={COUNTDOWN_OPTIONS}
+      value={value as 5 | 10 | 15}
+      onChange={onChange}
+      disabled={disabled}
+      unit="menit"
+    />
   );
 }
 
@@ -358,6 +337,53 @@ function QuickSoundButton({ label, path }: { label: string; path: string }) {
   );
 }
 
+// ── Hooks ────────────────────────────────────────────────────────────────────
+function useSoundPreview() {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState<string | null>(null);
+
+  const play = (path: string) => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+      if (playing === path) {
+        setPlaying(null);
+        return;
+      }
+    }
+    const audio = new Audio(path);
+    audioRef.current = audio;
+    setPlaying(path);
+    audio
+      .play()
+      .catch(() => toast.error("File suara tidak ditemukan: " + path));
+    audio.onended = () => {
+      setPlaying(null);
+      audioRef.current = null;
+    };
+  };
+
+  useEffect(
+    () => () => {
+      audioRef.current?.pause();
+    },
+    [],
+  );
+  return { play, playing };
+}
+
+function useBroadcast() {
+  const chRef = useRef<BroadcastChannel | null>(null);
+  useEffect(() => {
+    chRef.current = new BroadcastChannel(BROADCAST_CHANNEL);
+    return () => chRef.current?.close();
+  }, []);
+  const send = useCallback((msg: SimMessage) => {
+    chRef.current?.postMessage(msg);
+  }, []);
+  return { send };
+}
+
 // ── Simulation Panel ──────────────────────────────────────────────────────────
 function SimulationPanel({
   settings,
@@ -370,7 +396,6 @@ function SimulationPanel({
   const [simSalatDuration, setSimSalatDuration] = useState(30);
   const [simPrayer, setSimPrayer] = useState<PrayerName>("Dzuhur");
 
-  // State progres simulasi (dikelola di sini untuk tampilan panel)
   const [simPhase, setSimPhase] = useState<SimPhase | null>(null);
   const [phaseRemaining, setPhaseRemaining] = useState(0);
   const [phaseTotal, setPhaseTotal] = useState(0);
@@ -398,7 +423,6 @@ function SimulationPanel({
     const idx = currentPhaseIdxRef.current;
 
     if (idx >= queue.length) {
-      // Semua fase selesai
       setSimPhase("done");
       setTimeout(() => {
         send({ type: "STOP_SIM" });
@@ -433,7 +457,6 @@ function SimulationPanel({
     }
     stopSim();
 
-    // Kirim pesan ke display tab
     send({
       type: "START_SIM",
       prayer: simPrayer,
@@ -445,7 +468,6 @@ function SimulationPanel({
       iqamahAlarmEnabled: settings.iqamahAlarmEnabled,
     });
 
-    // Susun antrian fase (durasi harus cocok dengan yang dikirim ke display)
     phaseQueueRef.current = [
       { phase: "preview", durationSec: 10 },
       { phase: "adhan", durationSec: 10 },
@@ -477,7 +499,6 @@ function SimulationPanel({
   const mins = String(Math.floor(phaseRemaining / 60)).padStart(2, "0");
   const secs = String(phaseRemaining % 60).padStart(2, "0");
 
-  // Urutan fase untuk stepper
   const PHASE_STEPS: SimPhase[] = [
     "preview",
     "adhan",
@@ -497,7 +518,6 @@ function SimulationPanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
-        {/* Penjelasan alur */}
         <div className="rounded-xl bg-violet-50 border border-violet-100 px-4 py-3 flex items-start gap-3">
           <Radio className="w-4 h-4 text-violet-500 mt-0.5 shrink-0" />
           <div className="text-xs text-violet-700 leading-relaxed space-y-1">
@@ -513,7 +533,6 @@ function SimulationPanel({
           </div>
         </div>
 
-        {/* Alur fase visual */}
         <div className="flex items-center gap-1 flex-wrap">
           {[
             { label: "Preview", color: "bg-blue-400", desc: "10 detik" },
@@ -546,9 +565,7 @@ function SimulationPanel({
 
         <Separator />
 
-        {/* Pilihan */}
         <div className="grid sm:grid-cols-3 gap-4">
-          {/* Pilih shalat */}
           <div className="space-y-2">
             <p className="text-sm font-medium text-emerald-900">Waktu Shalat</p>
             <div className="flex flex-col gap-1.5">
@@ -574,7 +591,6 @@ function SimulationPanel({
             </div>
           </div>
 
-          {/* Durasi countdown iqamah simulasi */}
           <div className="space-y-2">
             <p className="text-sm font-medium text-emerald-900">
               Durasi Countdown Iqamah
@@ -605,7 +621,6 @@ function SimulationPanel({
             </div>
           </div>
 
-          {/* Durasi overlay shalat simulasi */}
           <div className="space-y-2">
             <p className="text-sm font-medium text-emerald-900">
               Durasi Overlay Shalat
@@ -631,7 +646,7 @@ function SimulationPanel({
                 </button>
               ))}
               <p className="text-[11px] text-muted-foreground pt-0.5">
-                Nyata: 20 menit
+                Nyata: {settings?.salatDurationMinutes ?? 20} menit
               </p>
             </div>
           </div>
@@ -639,10 +654,8 @@ function SimulationPanel({
 
         <Separator />
 
-        {/* Progress saat simulasi aktif */}
         {simPhase && (
           <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-4 space-y-3">
-            {/* Stepper */}
             <div className="flex items-center gap-1 mb-1">
               {PHASE_STEPS.map((p, i) => {
                 const currentIdx = PHASE_STEPS.indexOf(simPhase as SimPhase);
@@ -706,7 +719,6 @@ function SimulationPanel({
           </div>
         )}
 
-        {/* Tombol */}
         <div className="flex gap-3">
           {!isRunning ? (
             <Button
@@ -730,7 +742,6 @@ function SimulationPanel({
           )}
         </div>
 
-        {/* Test suara cepat */}
         <Separator />
         <div className="space-y-2">
           <p className="text-sm font-medium text-emerald-900">
@@ -773,7 +784,7 @@ function SettingsSkeleton() {
         <Skeleton className="h-10 w-64" />
         <Skeleton className="h-4 w-80" />
       </div>
-      {[1, 2, 3, 4].map((i) => (
+      {[1, 2, 3, 4, 5].map((i) => (
         <Card key={i}>
           <CardHeader>
             <Skeleton className="h-6 w-40" />
@@ -808,6 +819,9 @@ const SettingsPage = () => {
       iqamahSoundPath: "/sounds/iqamah-default.mp3",
       adhanAlarmEnabled: true,
       iqamahAlarmEnabled: true,
+      salatDurationMinutes: 20,
+      jumaahKhutbahMinutes: 30,
+      jumaahSalatDurationMinutes: 15,
     },
   });
 
@@ -819,6 +833,9 @@ const SettingsPage = () => {
         iqamahSoundPath: settings.iqamahSoundPath,
         adhanAlarmEnabled: settings.adhanAlarmEnabled,
         iqamahAlarmEnabled: settings.iqamahAlarmEnabled,
+        salatDurationMinutes: settings.salatDurationMinutes ?? 20,
+        jumaahKhutbahMinutes: settings.jumaahKhutbahMinutes ?? 30,
+        jumaahSalatDurationMinutes: settings.jumaahSalatDurationMinutes ?? 15,
       });
     }
   }, [settings, form]);
@@ -849,8 +866,8 @@ const SettingsPage = () => {
           Pengaturan
         </h1>
         <p className="text-muted-foreground mt-1">
-          Konfigurasi alarm azan, countdown iqamah, dan suara untuk layar
-          display.
+          Konfigurasi alarm azan, countdown iqamah, durasi shalat, dan
+          pengaturan khusus Jum'at untuk layar display.
         </p>
       </div>
 
@@ -928,7 +945,156 @@ const SettingsPage = () => {
           </CardContent>
         </Card>
 
-        {/* ── 2. Alarm Azan ───────────────────────────────────────────────── */}
+        {/* ── 2. Durasi Shalat Biasa ──────────────────────────────────────── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-teal-50 border border-teal-100 flex items-center justify-center">
+                <FaMosque className="w-4 h-4 text-teal-600" />
+              </div>
+              Durasi Overlay Shalat
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <p className="text-sm text-muted-foreground">
+              Berapa lama overlay "Sedang Shalat" ditampilkan setelah iqamah
+              pada shalat biasa (Subuh, Dzuhur, Ashar, Maghrib, Isya).
+            </p>
+            <Controller
+              control={form.control}
+              name="salatDurationMinutes"
+              render={({ field }) => (
+                <OptionPicker
+                  options={SALAT_DURATION_OPTIONS}
+                  value={field.value as (typeof SALAT_DURATION_OPTIONS)[number]}
+                  onChange={(v) => field.onChange(v)}
+                  unit="menit"
+                />
+              )}
+            />
+          </CardContent>
+        </Card>
+
+        {/* ── 3. Pengaturan Shalat Jum'at ─────────────────────────────────── */}
+        <Card className="border-green-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-green-50 border border-green-200 flex items-center justify-center">
+                <BookOpen className="w-4 h-4 text-green-700" />
+              </div>
+              <span className="text-green-900">Shalat Jum'at</span>
+              <span className="ml-1 text-xs font-normal bg-green-100 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">
+                Setiap Jum'at · Dzuhur
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Info banner */}
+            <div className="rounded-xl bg-green-50 border border-green-100 px-4 py-3 flex items-start gap-3">
+              <BookOpen className="w-4 h-4 text-green-600 mt-0.5 shrink-0" />
+              <div className="text-xs text-green-800 leading-relaxed space-y-1">
+                <p>
+                  Setiap <strong>hari Jum'at</strong>, waktu Dzuhur otomatis
+                  berubah menjadi alur Jum'at:
+                </p>
+                <div className="flex items-center gap-1 flex-wrap mt-1">
+                  {[
+                    { label: "Azan Jum'at", color: "bg-amber-400" },
+                    { label: "Khutbah", color: "bg-green-500" },
+                    { label: "Iqamah", color: "bg-purple-400" },
+                    { label: "Shalat", color: "bg-emerald-500" },
+                  ].map((item, i, arr) => (
+                    <div key={item.label} className="flex items-center gap-1">
+                      <span
+                        className={`${item.color} text-white text-[10px] font-bold px-2 py-0.5 rounded-md`}
+                      >
+                        {item.label}
+                      </span>
+                      {i < arr.length - 1 && (
+                        <ChevronRight className="w-3 h-3 text-green-400 shrink-0" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1 text-green-700/80">
+                  Alarm Iqamah <strong>tidak berbunyi</strong> pada shalat
+                  Jum'at (iqamah dilakukan setelah khatib turun).
+                </p>
+              </div>
+            </div>
+
+            {/* Durasi Khutbah */}
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium text-emerald-900">
+                  Durasi Khutbah Jum'at
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Lama overlay "Khutbah Jum'at" sebelum iqamah dimulai.
+                  Sesuaikan dengan kebiasaan masjid Anda.
+                </p>
+              </div>
+              <Controller
+                control={form.control}
+                name="jumaahKhutbahMinutes"
+                render={({ field }) => (
+                  <OptionPicker
+                    options={JUMAAH_KHUTBAH_OPTIONS}
+                    value={
+                      field.value as (typeof JUMAAH_KHUTBAH_OPTIONS)[number]
+                    }
+                    onChange={(v) => field.onChange(v)}
+                    unit="menit"
+                  />
+                )}
+              />
+              <div className="rounded-xl bg-green-50 border border-green-100 px-4 py-3 flex items-start gap-3">
+                <Clock className="w-4 h-4 text-green-600 mt-0.5 shrink-0" />
+                <p className="text-xs text-green-800 leading-relaxed">
+                  Contoh: azan Jum'at pukul 12:00, durasi khutbah{" "}
+                  <strong>{form.watch("jumaahKhutbahMinutes")} menit</strong> →
+                  iqamah Jum'at pukul{" "}
+                  <strong>
+                    {(() => {
+                      const d = new Date();
+                      d.setHours(12, form.watch("jumaahKhutbahMinutes"), 0);
+                      return d.toTimeString().slice(0, 5);
+                    })()}
+                  </strong>
+                  .
+                </p>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Durasi Shalat Jum'at */}
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium text-emerald-900">
+                  Durasi Overlay Shalat Jum'at
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Shalat Jum'at umumnya lebih singkat dari shalat biasa.
+                </p>
+              </div>
+              <Controller
+                control={form.control}
+                name="jumaahSalatDurationMinutes"
+                render={({ field }) => (
+                  <OptionPicker
+                    options={JUMAAH_SALAT_OPTIONS}
+                    value={field.value as (typeof JUMAAH_SALAT_OPTIONS)[number]}
+                    onChange={(v) => field.onChange(v)}
+                    unit="menit"
+                  />
+                )}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ── 4. Alarm Azan ───────────────────────────────────────────────── */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-2 flex-wrap">
@@ -1013,7 +1179,7 @@ const SettingsPage = () => {
           </CardContent>
         </Card>
 
-        {/* ── 3. Alarm Iqamah ─────────────────────────────────────────────── */}
+        {/* ── 5. Alarm Iqamah ─────────────────────────────────────────────── */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-2 flex-wrap">
@@ -1055,7 +1221,10 @@ const SettingsPage = () => {
               className={`text-sm text-muted-foreground ${!iqamahEnabled ? "opacity-50" : ""}`}
             >
               Suara yang diputar <strong>saat countdown iqamah habis</strong>,
-              sebelum overlay shalat tampil.
+              sebelum overlay shalat tampil.{" "}
+              <span className="text-green-700 font-medium">
+                Tidak aktif pada shalat Jum'at.
+              </span>
             </p>
             <Controller
               control={form.control}
@@ -1105,13 +1274,31 @@ const SettingsPage = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid sm:grid-cols-3 gap-4 text-sm">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
               {[
                 {
                   label: "Countdown Iqamah",
                   value: `${form.watch("iqamahCountdownMinutes")} menit setelah azan`,
                   icon: Timer,
                   color: "text-emerald-600",
+                },
+                {
+                  label: "Durasi Shalat Biasa",
+                  value: `${form.watch("salatDurationMinutes")} menit`,
+                  icon: FaMosque,
+                  color: "text-teal-600",
+                },
+                {
+                  label: "Khutbah Jum'at",
+                  value: `${form.watch("jumaahKhutbahMinutes")} menit`,
+                  icon: BookOpen,
+                  color: "text-green-700",
+                },
+                {
+                  label: "Shalat Jum'at",
+                  value: `${form.watch("jumaahSalatDurationMinutes")} menit`,
+                  icon: FaMosque,
+                  color: "text-green-600",
                 },
                 {
                   label: "Alarm Azan",

@@ -7,6 +7,9 @@ export interface PrayerSettings {
   iqamahSoundPath: string;
   adhanAlarmEnabled: boolean;
   iqamahAlarmEnabled: boolean;
+  salatDurationMinutes: number;
+  jumaahKhutbahMinutes: number;
+  jumaahSalatDurationMinutes: number;
   createdAt: string;
   updatedAt: string;
 }

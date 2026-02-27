@@ -102,6 +102,12 @@ model PrayerSettings {
   adhanAlarmEnabled  Boolean @default(true)
   iqamahAlarmEnabled Boolean @default(true)
 
+  salatDurationMinutes Int @default(20)
+
+  jumaahKhutbahMinutes Int @default(30)
+
+  jumaahSalatDurationMinutes Int @default(15)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

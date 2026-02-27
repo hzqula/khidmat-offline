@@ -17,12 +17,14 @@ import type { PrayerSettings } from "@/lib/types/prayer-settings";
 import type { SimMessage } from "@/app/(admin)/settings/page";
 import { Mosque } from "@/lib/types/mosque";
 
-// ─────────────────────────────────────────────────────────────────────────────
 const BROADCAST_CHANNEL = "khidmat-display-sim";
 const PREVIEW_SECONDS = 10;
-const ADHAN_ALARM_DURATION = 10; // detik overlay azan + bunyi alarm
-const IQAMAH_ALARM_DURATION = 10; // detik overlay iqamah + bunyi alarm
-const SALAT_DURATION_MINUTES = 20; // menit overlay "sedang shalat"
+const ADHAN_ALARM_DURATION = 10;
+const IQAMAH_ALARM_DURATION = 10;
+
+function isJumaah(tz: string): boolean {
+  return moment().tz(tz).day() === 5;
+}
 
 const PRAYER_STYLES = [
   { accent: "#4ade80" },
@@ -35,6 +37,13 @@ const PRAYER_STYLES = [
 type DisplayPhase =
   | { phase: "idle" }
   | { phase: "adhan"; prayer: string; remainingSec: number; isSim?: boolean }
+  | {
+      phase: "khutbah";
+      prayer: string;
+      remainingSec: number;
+      totalSec: number;
+      isSim?: boolean;
+    }
   | {
       phase: "iqamah";
       prayer: string;
@@ -54,6 +63,7 @@ type DisplayPhase =
       remainingSec: number;
       totalSec: number;
       isSim?: boolean;
+      isJumaah?: boolean;
     };
 
 type SimStage =
@@ -76,7 +86,7 @@ type SimState = {
   iqamahAlarmEnabled: boolean;
 };
 
-// ── Alarm hook
+// ── Alarm hook ────────────────────────────────────────────────────────────────
 function useAlarm() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const firedRef = useRef<Set<string>>(new Set());
@@ -95,7 +105,6 @@ function useAlarm() {
     audioRef.current = null;
   }, []);
 
-  // Bersihkan key kemarin tiap menit
   useEffect(() => {
     const id = setInterval(() => {
       const today = moment().format("YYYY-MM-DD");
@@ -109,7 +118,7 @@ function useAlarm() {
   return { fire, stopAll };
 }
 
-// ── Preview badge (saat sim stage = "preview") ─────────────────────────────
+// ── Preview badge ─────────────────────────────────────────────────────────────
 function PreviewBadge({ sim }: { sim: SimState }) {
   if (sim.stage !== "preview") return null;
   const pct = (sim.previewLeft / PREVIEW_SECONDS) * 100;
@@ -176,6 +185,7 @@ function AdhanOverlay({
 }) {
   const pct = (remainingSec / ADHAN_ALARM_DURATION) * 100;
   const circumference = 2 * Math.PI * 52;
+  const isJumaahPrayer = prayer === "Dzuhur / Jum'at";
 
   return (
     <div
@@ -186,7 +196,6 @@ function AdhanOverlay({
         animation: "fadeIn 0.6s ease-out both",
       }}
     >
-      {/* BG glow rings */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div
           style={{
@@ -225,12 +234,10 @@ function AdhanOverlay({
         </div>
       )}
 
-      {/* Arabic text */}
       <p className="text-gold/40 text-3xl mb-4" style={{ fontFamily: "serif" }}>
         الله أكبر
       </p>
 
-      {/* Ring countdown + bell */}
       <div className="relative flex items-center justify-center mb-6">
         <svg
           width="130"
@@ -277,17 +284,173 @@ function AdhanOverlay({
         style={{ animation: "fadeSlideUp 0.5s 0.2s ease-out both" }}
       >
         <p className="text-gold/60 text-xs tracking-[0.5em] uppercase font-semibold mb-2">
-          Waktu Shalat
+          {isJumaahPrayer ? "Azan Jum'at" : "Waktu Shalat"}
         </p>
         <p className="font-display font-black text-6xl text-gold mb-4">
-          {prayer}
+          {isJumaahPrayer ? "Jum'at" : prayer}
         </p>
         <div className="flex items-center justify-center gap-3">
           <div className="h-px w-16 bg-gold/25" />
           <p className="text-white/40 text-sm tracking-widest">
-            Iqamah segera dimulai
+            {isJumaahPrayer
+              ? "Khutbah segera dimulai"
+              : "Iqamah segera dimulai"}
           </p>
           <div className="h-px w-16 bg-gold/25" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Overlay: Khutbah Jum'at ───────────────────────────────────────────────────
+function KhutbahOverlay({
+  remainingSec,
+  totalSec,
+  isSim,
+}: {
+  remainingSec: number;
+  totalSec: number;
+  isSim?: boolean;
+}) {
+  const accent = "#4ade80";
+  const accent2 = "#86efac";
+  const pct = totalSec > 0 ? remainingSec / totalSec : 0;
+  const circumference = 2 * Math.PI * 80;
+  const m = String(Math.floor(remainingSec / 60)).padStart(2, "0");
+  const s = String(remainingSec % 60).padStart(2, "0");
+
+  return (
+    <div
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl overflow-hidden"
+      style={{
+        background:
+          "radial-gradient(ellipse at 50% 40%, #001a0a 0%, #000d05 55%, #000 100%)",
+        animation: "fadeIn 0.8s ease-out both",
+      }}
+    >
+      {/* BG glow */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            width: 560,
+            height: 560,
+            background: `radial-gradient(circle, ${accent}12 0%, transparent 60%)`,
+            borderRadius: "50%",
+            animation: "pulseRing 3s ease-in-out infinite",
+          }}
+        />
+      </div>
+
+      {isSim && (
+        <div className="absolute top-4 right-4 bg-violet-500/80 text-white text-[10px] font-bold px-2 py-0.5 rounded-full tracking-widest uppercase">
+          SIMULASI
+        </div>
+      )}
+
+      {/* Arabic header */}
+      <p
+        className="text-3xl mb-2"
+        style={{ color: `${accent}60`, fontFamily: "serif" }}
+      >
+        الجمعة
+      </p>
+
+      <p className="text-white/30 text-xs tracking-[0.6em] uppercase font-semibold mb-6">
+        Khutbah Jum'at berlangsung
+      </p>
+
+      {/* Ring countdown besar */}
+      <div className="relative flex items-center justify-center mb-6">
+        <svg
+          width="220"
+          height="220"
+          viewBox="0 0 220 220"
+          className="-rotate-90"
+        >
+          <circle
+            cx="110"
+            cy="110"
+            r="80"
+            fill="none"
+            stroke={`${accent}18`}
+            strokeWidth="7"
+          />
+          <circle
+            cx="110"
+            cy="110"
+            r="80"
+            fill="none"
+            stroke={accent}
+            strokeWidth="7"
+            strokeDasharray={`${circumference}`}
+            strokeDashoffset={`${circumference * (1 - pct)}`}
+            strokeLinecap="round"
+            style={{ transition: "stroke-dashoffset 0.9s linear" }}
+          />
+        </svg>
+        <div className="absolute flex flex-col items-center justify-center gap-1">
+          <span className="text-4xl">📖</span>
+          <span
+            className="font-black tabular-nums leading-none"
+            style={{ fontSize: "2.5rem", color: accent }}
+          >
+            {m}:{s}
+          </span>
+          <span
+            className="text-xs font-semibold tracking-widest uppercase"
+            style={{ color: `${accent}70` }}
+          >
+            menuju iqamah
+          </span>
+        </div>
+      </div>
+
+      <div
+        className="text-center"
+        style={{ animation: "fadeSlideUp 0.6s 0.3s ease-out both" }}
+      >
+        <p
+          className="font-display font-black text-5xl mb-4"
+          style={{ color: accent }}
+        >
+          Jum'at
+        </p>
+
+        {/* Instruksi jamaah */}
+        <div
+          className="flex flex-col items-center gap-2 px-8 py-4 rounded-2xl mx-auto"
+          style={{
+            background: `${accent}08`,
+            border: `1px solid ${accent}18`,
+            maxWidth: 360,
+          }}
+        >
+          {[
+            { icon: "🤫", text: "Dengarkan khutbah dengan seksama" },
+            { icon: "📵", text: "Senyapkan handphone" },
+            { icon: "🤝", text: "Luruskan dan rapatkan shaf" },
+          ].map((item, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3"
+              style={{
+                animation: `fadeSlideUp 0.5s ${0.35 + i * 0.12}s ease-out both`,
+              }}
+            >
+              <span className="text-xl">{item.icon}</span>
+              <span
+                className="font-semibold text-base tracking-wide"
+                style={{ color: "rgba(255,255,255,0.75)" }}
+              >
+                {item.text}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -347,7 +510,6 @@ function IqamahCountdownOverlay({
         Countdown Iqamah
       </p>
 
-      {/* Lingkaran countdown besar */}
       <div className="relative flex items-center justify-center mb-6">
         <svg
           width="220"
@@ -406,14 +568,14 @@ function IqamahCountdownOverlay({
           {prayer}
         </p>
         <p className="text-white/25 text-sm mt-3 tracking-wide">
-          Segara senyapkan HP
+          Segera senyapkan HP
         </p>
       </div>
     </div>
   );
 }
 
-// ── Overlay: Alarm Iqamah (sebelum overlay shalat) ───────────────────────────
+// ── Overlay: Alarm Iqamah ─────────────────────────────────────────────────────
 function IqamahAlarmOverlay({
   prayer,
   remainingSec,
@@ -534,13 +696,15 @@ function SalatOverlay({
   remainingSec,
   totalSec,
   isSim,
+  isJumaah: isJumaahPrayer,
 }: {
   prayer: string;
   remainingSec: number;
   totalSec: number;
   isSim?: boolean;
+  isJumaah?: boolean;
 }) {
-  const accent = "#4ade80";
+  const accent = isJumaahPrayer ? "#4ade80" : "#4ade80";
   const pct = totalSec > 0 ? remainingSec / totalSec : 0;
   const m = String(Math.floor(remainingSec / 60)).padStart(2, "0");
   const s = String(remainingSec % 60).padStart(2, "0");
@@ -593,6 +757,20 @@ function SalatOverlay({
         </div>
       )}
 
+      {/* Badge Jum'at */}
+      {isJumaahPrayer && (
+        <div
+          className="absolute top-4 left-4 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-widest uppercase"
+          style={{
+            background: `${accent}18`,
+            border: `1px solid ${accent}40`,
+            color: accent,
+          }}
+        >
+          🕌 Shalat Jum'at
+        </div>
+      )}
+
       {/* Mosque icon */}
       <div className="mb-5">
         <div
@@ -613,13 +791,13 @@ function SalatOverlay({
         style={{ animation: "fadeSlideUp 0.5s 0.2s ease-out both" }}
       >
         <p className="text-white/35 text-xs tracking-[0.6em] uppercase font-semibold mb-2">
-          Sedang Shalat
+          {isJumaahPrayer ? "Sedang Shalat Jum'at" : "Sedang Shalat"}
         </p>
         <p
           className="font-display font-black text-6xl mb-5"
           style={{ color: accent }}
         >
-          {prayer}
+          {isJumaahPrayer ? "Jum'at" : prayer}
         </p>
 
         {/* Instruksi */}
@@ -631,11 +809,18 @@ function SalatOverlay({
             maxWidth: 340,
           }}
         >
-          {[
-            { icon: "📏", text: "Luruskan shaf" },
-            { icon: "🤝", text: "Rapatkan barisan" },
-            { icon: "📵", text: "Senyapkan handphone" },
-          ].map((item, i) => (
+          {(isJumaahPrayer
+            ? [
+                { icon: "📏", text: "Luruskan shaf" },
+                { icon: "🤝", text: "Rapatkan barisan" },
+                { icon: "📵", text: "Senyapkan handphone" },
+              ]
+            : [
+                { icon: "📏", text: "Luruskan shaf" },
+                { icon: "🤝", text: "Rapatkan barisan" },
+                { icon: "📵", text: "Senyapkan handphone" },
+              ]
+          ).map((item, i) => (
             <div
               key={i}
               className="flex items-center gap-3"
@@ -652,7 +837,7 @@ function SalatOverlay({
         </div>
       </div>
 
-      {/* Timer selesai shalat */}
+      {/* Timer */}
       <div className="flex items-center gap-3">
         <div className="h-px w-12" style={{ background: `${accent}35` }} />
         <span
@@ -676,19 +861,16 @@ const DisplayPage = () => {
   const [activeSlide, setActiveSlide] = useState(0);
   const [tick, setTick] = useState(false);
 
-  // ── Fase display utama
   const [displayPhase, setDisplayPhase] = useState<DisplayPhase>({
     phase: "idle",
   });
   const phaseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Simulasi
   const [sim, setSim] = useState<SimState | null>(null);
   const simTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { fire, stopAll } = useAlarm();
 
-  // ── Helper: mulai fase dengan timer ─────────────────────────────────────
   const startPhaseTimer = useCallback(
     (
       initialPhase: DisplayPhase,
@@ -730,7 +912,7 @@ const DisplayPage = () => {
     [],
   );
 
-  // ── BroadcastChannel: terima sinyal dari Settings tab ─────────────────
+  // ── BroadcastChannel ─────────────────────────────────────────────────────
   useEffect(() => {
     const ch = new BroadcastChannel(BROADCAST_CHANNEL);
 
@@ -755,7 +937,6 @@ const DisplayPage = () => {
         }
         stopAll();
 
-        // Fase 1: preview (10 detik normal)
         setSim({
           stage: "preview",
           previewLeft: PREVIEW_SECONDS,
@@ -774,16 +955,13 @@ const DisplayPage = () => {
           setSim((prev) => {
             if (!prev) return null;
 
-            // ── Preview countdown ──────────────────────────────────────
             if (prev.stage === "preview") {
               const next = prev.previewLeft - 1;
               if (next <= 0) {
-                // Mulai fase adhan overlay
                 if (prev.adhanAlarmEnabled) {
                   const audio = new Audio(prev.adhanSoundPath);
                   audio.play().catch(() => {});
                 }
-                // Set display phase: adhan
                 setDisplayPhase({
                   phase: "adhan",
                   prayer: prev.prayer,
@@ -799,7 +977,6 @@ const DisplayPage = () => {
               return { ...prev, previewLeft: next };
             }
 
-            // ── Adhan alarm countdown ──────────────────────────────────
             if (prev.stage === "adhan-alarm") {
               const next = prev.remainingSec - 1;
               setDisplayPhase({
@@ -809,7 +986,6 @@ const DisplayPage = () => {
                 isSim: true,
               });
               if (next <= 0) {
-                // Masuk countdown iqamah
                 setDisplayPhase({
                   phase: "iqamah",
                   prayer: prev.prayer,
@@ -826,7 +1002,6 @@ const DisplayPage = () => {
               return { ...prev, remainingSec: next };
             }
 
-            // ── Iqamah countdown ───────────────────────────────────────
             if (prev.stage === "iqamah-countdown") {
               const next = prev.remainingSec - 1;
               setDisplayPhase({
@@ -837,12 +1012,10 @@ const DisplayPage = () => {
                 isSim: true,
               });
               if (next <= 0) {
-                // Bunyikan alarm iqamah
                 if (prev.iqamahAlarmEnabled) {
                   const audio = new Audio(prev.iqamahSoundPath);
                   audio.play().catch(() => {});
                 }
-                // Masuk salat-alarm
                 setDisplayPhase({
                   phase: "salat-alarm",
                   prayer: prev.prayer,
@@ -858,7 +1031,6 @@ const DisplayPage = () => {
               return { ...prev, remainingSec: next };
             }
 
-            // ── Salat alarm countdown ──────────────────────────────────
             if (prev.stage === "salat-alarm") {
               const next = prev.remainingSec - 1;
               setDisplayPhase({
@@ -886,7 +1058,6 @@ const DisplayPage = () => {
               return { ...prev, remainingSec: next };
             }
 
-            // ── Shalat overlay countdown ───────────────────────────────
             if (prev.stage === "salat") {
               const next = prev.remainingSec - 1;
               setDisplayPhase({
@@ -897,7 +1068,6 @@ const DisplayPage = () => {
                 isSim: true,
               });
               if (next <= 0) {
-                // Selesai simulasi
                 setTimeout(() => {
                   if (simTimerRef.current) {
                     clearInterval(simTimerRef.current);
@@ -986,87 +1156,203 @@ const DisplayPage = () => {
     const pt = new PrayerTimes(coords, now, params);
     const tz = mosque.timezone || "Asia/Jakarta";
     const fmt = (d: Date) => moment(d).tz(tz).format("HH:mm");
+    const friday = isJumaah(tz);
     return [
       {
         nama: "Subuh",
         waktu: fmt(pt.fajr),
         rawDate: pt.fajr,
         icon: <GiStripedSun />,
+        isJumaahPrayer: false,
       },
       {
-        nama: "Dzuhur",
+        nama: friday ? "Dzuhur / Jum'at" : "Dzuhur",
         waktu: fmt(pt.dhuhr),
         rawDate: pt.dhuhr,
         icon: <FaSun />,
+        isJumaahPrayer: friday,
       },
       {
         nama: "Ashar",
         waktu: fmt(pt.asr),
         rawDate: pt.asr,
         icon: <FaCloudSun />,
+        isJumaahPrayer: false,
       },
       {
         nama: "Maghrib",
         waktu: fmt(pt.maghrib),
         rawDate: pt.maghrib,
         icon: <PiSunHorizonFill />,
+        isJumaahPrayer: false,
       },
       {
         nama: "Isya",
         waktu: fmt(pt.isha),
         rawDate: pt.isha,
         icon: <RiMoonClearFill />,
+        isJumaahPrayer: false,
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mosque, now.toDateString()]);
 
   // ── Real-time phase logic ─────────────────────────────────────────────────
-  //
-  // Alur nyata per waktu shalat:
-  //   1. Waktu azan tiba → phase "adhan" (ADHAN_ALARM_DURATION detik) + bunyi alarm azan
-  //   2. Selesai → phase "iqamah" (iqamahCountdownMinutes menit)
-  //   3. Countdown habis → phase "salat-alarm" (IQAMAH_ALARM_DURATION detik) + bunyi alarm iqamah
-  //   4. Selesai → phase "salat" (SALAT_DURATION_MINUTES menit)
-  //   5. Selesai → kembali idle
-  //
   useEffect(() => {
     if (!prayerData || !prayerSettings || sim) return;
 
     const iqamahMin = (prayerSettings.iqamahCountdownMinutes ?? 10) * 60;
+    const salatDurationSec = (prayerSettings.salatDurationMinutes ?? 20) * 60;
+    const khutbahSec = (prayerSettings.jumaahKhutbahMinutes ?? 30) * 60;
+    const jumaahSalatSec =
+      (prayerSettings.jumaahSalatDurationMinutes ?? 15) * 60;
+
     const nowSec = now.getTime() / 1000;
     const today = moment(now).format("YYYY-MM-DD");
 
-    // Jangan proses ulang jika fase sudah aktif (bukan idle)
-    // Kita biarkan phaseTimer yang mengatur transisi antar fase
     if (displayPhase.phase !== "idle") return;
 
     for (const prayer of prayerData) {
       const prayerSec = prayer.rawDate.getTime() / 1000;
-      const adhanEndSec = prayerSec + ADHAN_ALARM_DURATION;
-      const iqamahEndSec = prayerSec + iqamahMin;
-      const salatEndSec =
-        iqamahEndSec + IQAMAH_ALARM_DURATION + SALAT_DURATION_MINUTES * 60;
-
       const diffToAdhan = nowSec - prayerSec;
 
-      // Waktu azan: window 0 ~ ADHAN_ALARM_DURATION
+      // ── Shalat Jum'at alur khusus ──────────────────────────────────────
+      if (prayer.isJumaahPrayer) {
+        // Durasi total sebelum shalat: adhan(10s) + khutbah
+        const khutbahEndSec = prayerSec + ADHAN_ALARM_DURATION + khutbahSec;
+        // Setelah khutbah: langsung iqamah singkat (IQAMAH_ALARM_DURATION)
+        const jumaahIqamahEndSec = khutbahEndSec + IQAMAH_ALARM_DURATION;
+        const jumaahSalatEndSec = jumaahIqamahEndSec + jumaahSalatSec;
+
+        // Fase 1: Azan Jum'at
+        if (diffToAdhan >= 0 && diffToAdhan < ADHAN_ALARM_DURATION) {
+          const remaining = Math.floor(ADHAN_ALARM_DURATION - diffToAdhan);
+          if (prayerSettings.adhanAlarmEnabled) {
+            fire(
+              prayerSettings.adhanSoundPath,
+              `adhan-${prayer.nama}-${today}`,
+            );
+          }
+          startPhaseTimer(
+            { phase: "adhan", prayer: prayer.nama, remainingSec: remaining },
+            (prev) => {
+              if (prev.phase !== "adhan") return null;
+              const next = prev.remainingSec - 1;
+              if (next <= 0) {
+                return {
+                  phase: "khutbah",
+                  prayer: prev.prayer,
+                  remainingSec: khutbahSec,
+                  totalSec: khutbahSec,
+                };
+              }
+              return { ...prev, remainingSec: next };
+            },
+          );
+          break;
+        }
+
+        // Fase 2: Khutbah Jum'at
+        if (diffToAdhan >= ADHAN_ALARM_DURATION && nowSec < khutbahEndSec) {
+          const elapsed = diffToAdhan - ADHAN_ALARM_DURATION;
+          const remaining = Math.floor(khutbahSec - elapsed);
+          if (remaining <= 0) continue;
+
+          startPhaseTimer(
+            {
+              phase: "khutbah",
+              prayer: prayer.nama,
+              remainingSec: remaining,
+              totalSec: khutbahSec,
+            },
+            (prev) => {
+              if (prev.phase !== "khutbah") return null;
+              const next = prev.remainingSec - 1;
+              if (next <= 0) {
+                // Langsung ke salat-alarm (tidak ada alarm iqamah pada Jum'at)
+                return {
+                  phase: "salat-alarm",
+                  prayer: prev.prayer,
+                  remainingSec: IQAMAH_ALARM_DURATION,
+                };
+              }
+              return { ...prev, remainingSec: next };
+            },
+          );
+          break;
+        }
+
+        // Fase 3: Iqamah Jum'at (salat-alarm, tanpa alarm bunyi)
+        if (nowSec >= khutbahEndSec && nowSec < jumaahIqamahEndSec) {
+          const remaining = Math.floor(jumaahIqamahEndSec - nowSec);
+          startPhaseTimer(
+            {
+              phase: "salat-alarm",
+              prayer: prayer.nama,
+              remainingSec: remaining,
+            },
+            (prev) => {
+              if (prev.phase !== "salat-alarm") return null;
+              const next = prev.remainingSec - 1;
+              if (next <= 0) {
+                return {
+                  phase: "salat",
+                  prayer: prev.prayer,
+                  remainingSec: jumaahSalatSec,
+                  totalSec: jumaahSalatSec,
+                  isJumaah: true,
+                };
+              }
+              return { ...prev, remainingSec: next };
+            },
+          );
+          break;
+        }
+
+        // Fase 4: Shalat Jum'at
+        if (nowSec >= jumaahIqamahEndSec && nowSec < jumaahSalatEndSec) {
+          const elapsed = nowSec - jumaahIqamahEndSec;
+          const remaining = Math.floor(jumaahSalatSec - elapsed);
+          if (remaining <= 0) continue;
+          startPhaseTimer(
+            {
+              phase: "salat",
+              prayer: prayer.nama,
+              remainingSec: remaining,
+              totalSec: jumaahSalatSec,
+              isJumaah: true,
+            },
+            (prev) => {
+              if (prev.phase !== "salat") return null;
+              const next = prev.remainingSec - 1;
+              if (next <= 0) return null;
+              return { ...prev, remainingSec: next };
+            },
+          );
+          break;
+        }
+
+        continue; // sudah selesai
+      }
+
+      // ── Shalat biasa ───────────────────────────────────────────────────
+      const adhanEndSec = prayerSec + ADHAN_ALARM_DURATION;
+      const iqamahEndSec = prayerSec + iqamahMin;
+      const salatAlarmEnd = iqamahEndSec + IQAMAH_ALARM_DURATION;
+      const salatEndSec = salatAlarmEnd + salatDurationSec;
+
+      // Waktu azan
       if (diffToAdhan >= 0 && diffToAdhan < ADHAN_ALARM_DURATION) {
         const remaining = Math.floor(ADHAN_ALARM_DURATION - diffToAdhan);
-
-        // Bunyi alarm azan (sekali)
         if (prayerSettings.adhanAlarmEnabled) {
           fire(prayerSettings.adhanSoundPath, `adhan-${prayer.nama}-${today}`);
         }
-
-        // Mulai fase adhan
         startPhaseTimer(
           { phase: "adhan", prayer: prayer.nama, remainingSec: remaining },
           (prev) => {
             if (prev.phase !== "adhan") return null;
             const next = prev.remainingSec - 1;
             if (next <= 0) {
-              // Transisi ke iqamah countdown
               return {
                 phase: "iqamah",
                 prayer: prev.prayer,
@@ -1080,7 +1366,7 @@ const DisplayPage = () => {
         break;
       }
 
-      // Iqamah countdown: window ADHAN_ALARM_DURATION ~ iqamahMin
+      // Iqamah countdown
       if (diffToAdhan >= ADHAN_ALARM_DURATION && nowSec < iqamahEndSec) {
         const elapsed = diffToAdhan - ADHAN_ALARM_DURATION;
         const iqamahCountdownTotal = iqamahMin - ADHAN_ALARM_DURATION;
@@ -1098,7 +1384,6 @@ const DisplayPage = () => {
             if (prev.phase !== "iqamah") return null;
             const next = prev.remainingSec - 1;
             if (next <= 0) {
-              // Bunyi alarm iqamah, masuk salat-alarm
               if (prayerSettings.iqamahAlarmEnabled) {
                 fire(
                   prayerSettings.iqamahSoundPath,
@@ -1117,19 +1402,15 @@ const DisplayPage = () => {
         break;
       }
 
-      // Salat alarm: window iqamahEnd ~ iqamahEnd + IQAMAH_ALARM_DURATION
-      const salatAlarmEnd = iqamahEndSec + IQAMAH_ALARM_DURATION;
+      // Salat alarm
       if (nowSec >= iqamahEndSec && nowSec < salatAlarmEnd) {
         const remaining = Math.floor(salatAlarmEnd - nowSec);
-
         if (prayerSettings.iqamahAlarmEnabled) {
           fire(
             prayerSettings.iqamahSoundPath,
             `iqamah-${prayer.nama}-${today}`,
           );
         }
-
-        const salatTotal = SALAT_DURATION_MINUTES * 60;
         startPhaseTimer(
           {
             phase: "salat-alarm",
@@ -1143,8 +1424,8 @@ const DisplayPage = () => {
               return {
                 phase: "salat",
                 prayer: prev.prayer,
-                remainingSec: salatTotal,
-                totalSec: salatTotal,
+                remainingSec: salatDurationSec,
+                totalSec: salatDurationSec,
               };
             }
             return { ...prev, remainingSec: next };
@@ -1153,11 +1434,10 @@ const DisplayPage = () => {
         break;
       }
 
-      // Shalat overlay: window salatAlarmEnd ~ salatEnd
+      // Shalat overlay
       if (nowSec >= salatAlarmEnd && nowSec < salatEndSec) {
-        const salatTotal = SALAT_DURATION_MINUTES * 60;
         const elapsed = nowSec - salatAlarmEnd;
-        const remaining = Math.floor(salatTotal - elapsed);
+        const remaining = Math.floor(salatDurationSec - elapsed);
         if (remaining <= 0) continue;
 
         startPhaseTimer(
@@ -1165,12 +1445,12 @@ const DisplayPage = () => {
             phase: "salat",
             prayer: prayer.nama,
             remainingSec: remaining,
-            totalSec: salatTotal,
+            totalSec: salatDurationSec,
           },
           (prev) => {
             if (prev.phase !== "salat") return null;
             const next = prev.remainingSec - 1;
-            if (next <= 0) return null; // → idle
+            if (next <= 0) return null;
             return { ...prev, remainingSec: next };
           },
         );
@@ -1202,7 +1482,6 @@ const DisplayPage = () => {
   const nextName =
     nextIdx >= 0 ? prayerData?.[nextIdx]?.nama : prayerData?.[0]?.nama;
 
-  // Apakah slider harus di-dim
   const sliderDimmed =
     displayPhase.phase !== "idle" || (sim?.stage === "preview" ? false : !!sim);
 
@@ -1228,7 +1507,7 @@ const DisplayPage = () => {
         .join("   ✦   ") + (financeText ? `   ✦   ${financeText}` : "")
     : `SELAMAT DATANG DI ${(mosque?.name ?? "MASJID").toUpperCase()} — JAGALAH KEBERSIHAN MASJID KITA BERSAMA.${financeText ? `   ✦   ${financeText}` : ""}`;
 
-  // ── Loading / error screens ──────────────────────────────────────────────
+  // ── Loading / error ──────────────────────────────────────────────────────
   if (isLoading)
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-[#0a1f14] gap-4">
@@ -1341,11 +1620,33 @@ const DisplayPage = () => {
             {prayerData.map((item, idx) => {
               const isNext = nextName === item.nama;
               const style = PRAYER_STYLES[idx];
-              // Highlight jika sedang dalam fase shalat ini
               const isActive =
                 displayPhase.phase !== "idle" &&
                 "prayer" in displayPhase &&
                 displayPhase.prayer === item.nama;
+
+              // Label fase yang sedang aktif
+              let phaseLabel = "";
+              if (isActive) {
+                if (displayPhase.phase === "adhan")
+                  phaseLabel = item.isJumaahPrayer ? "Azan Jum'at" : "Azan";
+                else if (displayPhase.phase === "khutbah")
+                  phaseLabel = "Khutbah berlangsung";
+                else if (displayPhase.phase === "iqamah")
+                  phaseLabel = "Countdown Iqamah";
+                else if (displayPhase.phase === "salat-alarm")
+                  phaseLabel = "Iqamah";
+                else if (displayPhase.phase === "salat")
+                  phaseLabel = item.isJumaahPrayer
+                    ? "Shalat Jum'at Berlangsung"
+                    : "Shalat Berlangsung";
+              }
+
+              // Warna aksen khusus Jum'at
+              const itemStyle = item.isJumaahPrayer
+                ? { accent: "#4ade80" }
+                : style;
+
               return (
                 <div
                   key={item.nama}
@@ -1353,14 +1654,14 @@ const DisplayPage = () => {
                   style={
                     isActive
                       ? {
-                          background: `linear-gradient(135deg, ${style.accent}30, ${style.accent}12)`,
-                          border: `2px solid ${style.accent}`,
-                          boxShadow: `0 0 20px ${style.accent}30`,
+                          background: `linear-gradient(135deg, ${itemStyle.accent}30, ${itemStyle.accent}12)`,
+                          border: `2px solid ${itemStyle.accent}`,
+                          boxShadow: `0 0 20px ${itemStyle.accent}30`,
                         }
                       : isNext
                         ? {
-                            background: `linear-gradient(135deg, ${style.accent}22, ${style.accent}08)`,
-                            border: `1.5px solid ${style.accent}80`,
+                            background: `linear-gradient(135deg, ${itemStyle.accent}22, ${itemStyle.accent}08)`,
+                            border: `1.5px solid ${itemStyle.accent}80`,
                           }
                         : {
                             background: "rgba(255,255,255,0.03)",
@@ -1372,49 +1673,59 @@ const DisplayPage = () => {
                     className="absolute left-0 top-4 bottom-4 w-1.5 rounded-full"
                     style={{
                       background:
-                        isActive || isNext ? style.accent : `${style.accent}40`,
+                        isActive || isNext
+                          ? itemStyle.accent
+                          : `${itemStyle.accent}40`,
                     }}
                   />
                   <div
                     className="text-5xl shrink-0"
                     style={{
                       color:
-                        isActive || isNext ? style.accent : `${style.accent}80`,
+                        isActive || isNext
+                          ? itemStyle.accent
+                          : `${itemStyle.accent}80`,
                     }}
                   >
-                    {item.icon}
+                    {/* Ikon khusus Jum'at */}
+                    {item.isJumaahPrayer ? (
+                      <span style={{ fontSize: "2.5rem" }}>🕌</span>
+                    ) : (
+                      item.icon
+                    )}
                   </div>
                   <div className="flex-1">
                     <p
                       className="font-bold leading-none"
                       style={{
-                        fontSize: "1.5rem",
+                        fontSize: "1.4rem",
                         color:
                           isActive || isNext ? "#fff" : "rgba(255,255,255,0.7)",
                       }}
                     >
                       {item.nama}
                     </p>
-                    {isActive && (
+                    {/* Badge Jum'at */}
+                    {item.isJumaahPrayer && !isActive && (
+                      <p
+                        className="text-[10px] mt-0.5 tracking-widest uppercase font-semibold"
+                        style={{ color: `${itemStyle.accent}80` }}
+                      >
+                        Shalat Jum'at
+                      </p>
+                    )}
+                    {isActive && phaseLabel && (
                       <p
                         className="text-xs mt-1 tracking-[0.2em] uppercase font-semibold animate-pulse"
-                        style={{ color: style.accent }}
+                        style={{ color: itemStyle.accent }}
                       >
-                        {displayPhase.phase === "adhan"
-                          ? "Azan"
-                          : displayPhase.phase === "iqamah"
-                            ? "Countdown Iqamah"
-                            : displayPhase.phase === "salat-alarm"
-                              ? "Iqamah"
-                              : displayPhase.phase === "salat"
-                                ? "Shalat Berlangsung"
-                                : ""}
+                        {phaseLabel}
                       </p>
                     )}
                     {!isActive && isNext && (
                       <p
                         className="text-xs mt-1 tracking-[0.2em] uppercase"
-                        style={{ color: style.accent }}
+                        style={{ color: itemStyle.accent }}
                       >
                         Berikutnya
                       </p>
@@ -1426,7 +1737,7 @@ const DisplayPage = () => {
                       fontSize: isActive || isNext ? "3rem" : "2.5rem",
                       color:
                         isActive || isNext
-                          ? style.accent
+                          ? itemStyle.accent
                           : "rgba(255,255,255,0.85)",
                     }}
                   >
@@ -1443,7 +1754,7 @@ const DisplayPage = () => {
           {/* ── Slider area ── */}
           <main className="relative p-8">
             <div className="relative w-full h-full rounded-2xl overflow-hidden border border-gold/20 bg-[#0a1f14] shadow-2xl">
-              {/* Preview badge saat sim.stage === "preview" */}
+              {/* Preview badge */}
               {sim && <PreviewBadge sim={sim} />}
 
               {/* ── Overlay sesuai fase ── */}
@@ -1451,6 +1762,13 @@ const DisplayPage = () => {
                 <AdhanOverlay
                   prayer={displayPhase.prayer}
                   remainingSec={displayPhase.remainingSec}
+                  isSim={displayPhase.isSim}
+                />
+              )}
+              {displayPhase.phase === "khutbah" && (
+                <KhutbahOverlay
+                  remainingSec={displayPhase.remainingSec}
+                  totalSec={displayPhase.totalSec}
                   isSim={displayPhase.isSim}
                 />
               )}
@@ -1475,6 +1793,7 @@ const DisplayPage = () => {
                   remainingSec={displayPhase.remainingSec}
                   totalSec={displayPhase.totalSec}
                   isSim={displayPhase.isSim}
+                  isJumaah={displayPhase.isJumaah}
                 />
               )}
 
