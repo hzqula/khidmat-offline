@@ -20,7 +20,8 @@ import api from "@/lib/axios";
 import { DevTool } from "@hookform/devtools";
 import { toast } from "sonner";
 import MapPicker from "@/components/map-picker";
-import { Loader2, MapPin, Building2, Navigation } from "lucide-react";
+import { Loader2, MapPin, Building2, Navigation, Search } from "lucide-react";
+import { useState } from "react";
 
 interface ReverseGeocodeResult {
   district: string;
@@ -29,6 +30,10 @@ interface ReverseGeocodeResult {
 }
 
 const DashboardPage = () => {
+  const [manualLat, setManualLat] = useState("");
+  const [manualLng, setManualLng] = useState("");
+  const [manualError, setManualError] = useState("");
+
   const form = useForm<Mosque>({
     defaultValues: {
       name: "",
@@ -45,13 +50,16 @@ const DashboardPage = () => {
     queryKey: ["mosque"],
     queryFn: async () => {
       const { data } = await api.get("/admin/mosque");
-      if (data)
+      if (data) {
         form.reset({
           ...data,
           district: data.district ?? "",
           city: data.city ?? "",
           province: data.province ?? "",
         });
+        if (data.latitude != null) setManualLat(String(data.latitude));
+        if (data.longitude != null) setManualLng(String(data.longitude));
+      }
       return data;
     },
   });
@@ -112,6 +120,26 @@ const DashboardPage = () => {
       toast.error("Koordinat tersimpan, tapi autofill wilayah gagal.");
     },
   });
+
+  // Handle manual coordinate input
+  const handleApplyManualCoords = () => {
+    setManualError("");
+    const lat = parseFloat(manualLat);
+    const lng = parseFloat(manualLng);
+
+    if (isNaN(lat) || lat < -90 || lat > 90) {
+      setManualError("Latitude harus berupa angka antara -90 dan 90.");
+      return;
+    }
+    if (isNaN(lng) || lng < -180 || lng > 180) {
+      setManualError("Longitude harus berupa angka antara -180 dan 180.");
+      return;
+    }
+
+    form.setValue("latitude", lat, { shouldDirty: true });
+    form.setValue("longitude", lng, { shouldDirty: true });
+    reverseGeocodeMutation.mutate({ lat, lng });
+  };
 
   if (isLoading) {
     return (
@@ -280,18 +308,85 @@ const DashboardPage = () => {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Manual coordinate input */}
+              <div className="rounded-xl bg-blue-50 border border-blue-100 p-4 space-y-3">
+                <p className="text-sm font-medium text-blue-800">
+                  Input Koordinat Manual
+                </p>
+                <p className="text-xs text-blue-600">
+                  Masukkan koordinat secara langsung jika sudah mengetahui nilai
+                  latitude dan longitude masjid.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-blue-700">
+                      Latitude
+                    </label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="Contoh: 0.507068"
+                      value={manualLat}
+                      onChange={(e) => {
+                        setManualLat(e.target.value);
+                        setManualError("");
+                      }}
+                      className="bg-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-blue-700">
+                      Longitude
+                    </label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="Contoh: 101.447779"
+                      value={manualLng}
+                      onChange={(e) => {
+                        setManualLng(e.target.value);
+                        setManualError("");
+                      }}
+                      className="bg-white"
+                    />
+                  </div>
+                </div>
+                {manualError && (
+                  <p className="text-xs text-red-600">{manualError}</p>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleApplyManualCoords}
+                  disabled={reverseGeocodeMutation.isPending}
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  {reverseGeocodeMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                  ) : (
+                    <Search className="h-3.5 w-3.5 mr-1" />
+                  )}
+                  Terapkan Koordinat
+                </Button>
+              </div>
+
+              <Separator />
+
               <MapPicker
                 lat={form.watch("latitude") ?? 0.507068}
                 lng={form.watch("longitude") ?? 101.447779}
                 onChange={(lat, lng) => {
                   form.setValue("latitude", lat, { shouldDirty: true });
                   form.setValue("longitude", lng, { shouldDirty: true });
+                  setManualLat(String(lat));
+                  setManualLng(String(lng));
                   reverseGeocodeMutation.mutate({ lat, lng });
                 }}
               />
               <p className="text-sm text-muted-foreground">
-                Klik peta untuk memilih lokasi. Kecamatan, kabupaten/kota, dan
-                provinsi akan dicoba diisi otomatis dan tetap bisa Anda edit.
+                Klik peta untuk memilih lokasi, atau gunakan input koordinat
+                manual di atas. Kecamatan, kabupaten/kota, dan provinsi akan
+                dicoba diisi otomatis dan tetap bisa Anda edit.
               </p>
 
               <Separator />
@@ -303,7 +398,7 @@ const DashboardPage = () => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-muted-foreground text-xs uppercase tracking-wide">
-                        Latitude
+                        Latitude (Tersimpan)
                       </FormLabel>
                       <FormControl>
                         <Input
@@ -325,7 +420,7 @@ const DashboardPage = () => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-muted-foreground text-xs uppercase tracking-wide">
-                        Longitude
+                        Longitude (Tersimpan)
                       </FormLabel>
                       <FormControl>
                         <Input
