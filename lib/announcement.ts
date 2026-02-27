@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 
-export const ANNOUNCEMENT_LIMIT = 5;
+export const ANNOUNCEMENT_LIMIT = 10;
 
 export const listAnnouncements = async () => {
   return prisma.announcement.findMany({

@@ -28,7 +28,7 @@ export const POST = async (req: Request) => {
     if (error instanceof Error) {
       if (
         error.message === "Isi pengumuman tidak boleh kosong" ||
-        error.message === "Maksimal 5 pengumuman"
+        error.message === "Maksimal 10 pengumuman"
       ) {
         return NextResponse.json({ error: error.message }, { status: 400 });
       }

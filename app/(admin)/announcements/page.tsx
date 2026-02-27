@@ -30,7 +30,7 @@ interface ErrorResponse {
   error: string;
 }
 
-const MAX_ANNOUNCEMENTS = 5;
+const MAX_ANNOUNCEMENTS = 10;
 const MAX_CHARS = 200;
 
 // ── Inline edit row ────────────────────────────────────────────────────────────
